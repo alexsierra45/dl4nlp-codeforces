@@ -17,10 +17,10 @@
 # # Predicción de etiquetas algorítmicas y dificultad de problemas de Codeforces
 # ## Ajuste fino multitarea de ModernBERT
 #
-# **Instrucciones de ejecución**
-#
 # [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](
 # https://colab.research.google.com/github/alexsierra45/dl4nlp-codeforces/blob/main/Sierra_Alcala_Alex.ipynb)
+#
+# **Instrucciones de ejecución**
 #
 # 1. Abrir el notebook en Google Colab y seleccionar *Entorno de ejecución → Cambiar tipo de
 #    entorno de ejecución → GPU T4*.
@@ -28,17 +28,15 @@
 #    (icono 🔑 de la barra lateral). Sin token el notebook funciona igual, pero no sube nada al Hub.
 # 3. Ejecutar *Entorno de ejecución → Ejecutar todo*.
 #
-# El comportamiento se controla con unos pocos *flags* en la celda de configuración:
+# Dos *flags* de la celda de configuración controlan la ejecución:
 #
 # | Flag | Efecto |
 # |---|---|
 # | `RUN_TRAINING` | `True`: entrena el modelo. `False`: lo descarga ya ajustado desde el Hub. |
-# | `RUN_LLM_BASELINE` | Ejecuta el baseline zero-shot con Qwen2.5-7B-Instruct (4 bits). |
-# | `RUN_ABLATIONS` | Entrena las ablaciones A1–A3 (3 épocas cada una). |
-# | `PUSH_TO_HUB` | Sube modelo, dataset procesado y respuestas del LLM al Hub (requiere token). |
+# | `PUSH_TO_HUB` | Sube el modelo y el dataset procesado al Hub (requiere token). |
 #
-# Las respuestas del LLM se guardan de forma reanudable y el modelo se sube al Hub al final de
-# cada época, de modo que una desconexión de Colab no obliga a repetir todo el trabajo.
+# El modelo se sube al Hub al final de cada época, de modo que una desconexión de Colab no obliga a
+# repetir todo el entrenamiento.
 #
 # Tiempo aproximado en una T4: <!-- TODO: completar tras ejecución en Colab -->
 
@@ -58,7 +56,7 @@
 # ## 2.1. La tarea
 #
 # [Codeforces](https://codeforces.com/) es una de las plataformas de programación competitiva más
-# usadas. Cada problema publicado lleva asociadas dos piezas de metadatos que asigna la comunidad:
+# usadas. Cada problema lleva asociadas dos piezas de metadatos:
 #
 # - **Etiquetas algorítmicas** (`dp`, `greedy`, `graphs`, `math`...): las técnicas con las que se
 #   puede resolver. Un problema suele tener varias, así que es un problema de **clasificación
@@ -67,77 +65,67 @@
 #   problema de **regresión**.
 #
 # En este proyecto se predicen **ambas cosas a la vez** a partir únicamente del enunciado en inglés.
-# Un sistema así tiene aplicaciones claras: recomendar problemas para entrenar una técnica
-# concreta, estimar la dificultad de un problema nuevo antes de un concurso o etiquetar
-# automáticamente colecciones de problemas que no tienen metadatos.
+# Un sistema así sirve para recomendar problemas con los que entrenar una técnica concreta, estimar
+# la dificultad de un problema nuevo o etiquetar colecciones de problemas sin metadatos.
 #
-# La tarea es difícil por varios motivos: el enunciado describe *qué* hay que calcular, no *cómo*;
-# la misma historia puede esconder técnicas muy distintas; y los números de las restricciones
-# (por ejemplo, $n \le 2 \cdot 10^5$ frente a $n \le 20$) son pistas decisivas sobre la
-# complejidad esperada.
+# La tarea es difícil porque el enunciado describe *qué* hay que calcular, no *cómo*. Además, los
+# números de las restricciones (por ejemplo, $n \le 2 \cdot 10^5$ frente a $n \le 20$) son pistas
+# decisivas sobre la complejidad esperada de la solución.
 #
 # ## 2.2. Por qué ModernBERT
 #
 # Se usa [`answerdotai/ModernBERT-base`](https://huggingface.co/answerdotai/ModernBERT-base)
-# (Warner et al., 2024), un *encoder* bidireccional al estilo BERT pero con un diseño moderno.
-# Según su *model card*:
+# (Warner et al., 2024), un *encoder* bidireccional al estilo BERT con un diseño moderno. Según su
+# *model card*:
 #
 # - Está preentrenado con **2 billones de tokens de texto en inglés y código**, un dominio cercano
 #   al de los enunciados de programación competitiva.
-# - Tiene un **contexto nativo de 8192 tokens**, frente a los 512 de BERT. Los enunciados de
-#   Codeforces superan con frecuencia los 512 tokens (se cuantifica en la sección 3).
-# - Usa **RoPE**, **atención alterna local-global** y *unpadding*, lo que lo hace eficiente con
-#   textos largos.
+# - Tiene un **contexto nativo de 8192 tokens**, frente a los 512 de BERT. Muchos enunciados de
+#   Codeforces superan los 512 tokens (se cuantifica en la sección 3).
 # - Tiene 22 capas y **149 millones de parámetros**.
 #
-# Un *encoder* es más adecuado que un LLM generativo para esta tarea: la salida es un vector de
-# probabilidades y un número, no texto, y el coste de inferencia es mucho menor.
+# Un *encoder* encaja mejor que un LLM generativo en esta tarea: la salida es un vector de
+# probabilidades y un número, no texto.
 #
 # ## 2.3. Por qué ajuste fino completo (y no LoRA)
 #
-# Con unos 150M de parámetros, el modelo, sus gradientes y los estados del optimizador AdamW caben
-# holgadamente en los 16 GB de una T4 en precisión mixta. Las técnicas PEFT como LoRA o QLoRA
-# (notebook 7 de clase) están pensadas para modelos de miles de millones de parámetros que no caben
-# en memoria; aquí no son necesarias, y el ajuste fino completo permite adaptar todas las capas del
-# *encoder* a un dominio técnico muy específico. Es una **decisión consciente**, no una omisión.
+# Con unos 150M de parámetros, el modelo, sus gradientes y los estados del optimizador caben en los
+# 16 GB de una T4 en precisión mixta. Técnicas como LoRA o QLoRA (notebook 7 de clase) están
+# pensadas para modelos de miles de millones de parámetros que no caben en memoria; aquí no son
+# necesarias, y el ajuste fino completo permite adaptar todas las capas a un dominio muy técnico.
 #
 # ## 2.4. Por qué multitarea
 #
-# Etiquetas y dificultad están relacionadas: los problemas de `flows` o `fft` son casi siempre
-# difíciles y los de `implementation` suelen ser fáciles (se comprueba en la sección 3). Compartir
-# el *encoder* entre ambas tareas permite que cada una actúe como regularizador de la otra. Además,
-# se obtiene un único modelo que resuelve las dos tareas con una sola pasada. La ablación A1 de la
-# sección 5 mide si este diseño aporta algo frente a entrenar solo las etiquetas.
+# Etiquetas y dificultad están relacionadas: algunas técnicas aparecen sobre todo en problemas
+# difíciles y otras en problemas fáciles (se comprueba en la sección 3). Compartir el *encoder*
+# entre las dos tareas permite aprovechar esa relación, y se obtiene un único modelo que resuelve
+# ambas con una sola pasada.
 
 # %% [markdown]
 # ## 2.5. Preparación del entorno
 #
-# Instalamos las librerías necesarias. Se fijan las versiones de las librerías del ecosistema
-# Hugging Face con las que se ha probado el notebook, porque su API cambia entre versiones
-# (por ejemplo, `transformers` 5 sustituye `warmup_ratio` y `group_by_length`).
+# Instalamos las librerías necesarias. Se fijan las versiones del ecosistema Hugging Face con las
+# que se ha probado el notebook, porque su API cambia entre versiones.
 #
 # - `transformers`: modelos, tokenizadores y la clase `Trainer`.
 # - `datasets`: contenedor `Dataset` usado por el `Trainer`.
 # - `accelerate`: abstracción del hardware usada internamente por el `Trainer`.
-# - `huggingface_hub`: lectura del dataset por columnas y subida del modelo al Hub.
-# - `bitsandbytes`: cuantización a 4 bits del LLM usado como baseline.
+# - `huggingface_hub`: lectura del dataset y subida del modelo al Hub.
 # - `scikit-learn`: baselines clásicos y métricas.
 
 # %%
 # %pip install -q transformers==5.19.0 datasets==5.1.0 accelerate==1.15.0
-# %pip install -q huggingface_hub==1.33.0 bitsandbytes==0.50.2 scikit-learn pyarrow seaborn
+# %pip install -q huggingface_hub==1.33.0 scikit-learn pyarrow seaborn
 
 # %% [markdown]
-# Importaciones, versiones y semillas. Fijamos la semilla en `random`, `numpy` y `torch` (lo hace
-# `transformers.set_seed`) para que los resultados sean reproducibles.
+# Importaciones, versiones y semillas. `transformers.set_seed` fija la semilla de `random`, `numpy`
+# y `torch` para que los resultados sean reproducibles.
 
 # %%
 import collections
-import gc
 import hashlib
 import json
 import os
-import random
 import re
 import time
 import warnings
@@ -149,7 +137,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
-import scipy
 import seaborn as sns
 import sklearn
 import torch
@@ -158,7 +145,7 @@ import torch.nn.functional as F
 import transformers
 from datasets import Dataset
 from huggingface_hub import HfApi, HfFileSystem, hf_hub_download, login
-from IPython.display import Markdown, display
+from IPython.display import display
 from scipy.stats import spearmanr
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression, Ridge
@@ -186,7 +173,7 @@ datasets.disable_progress_bars()
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["WANDB_DISABLED"] = "true"
 
-for lib in [torch, transformers, datasets, sklearn, np, pd, scipy]:
+for lib in [torch, transformers, datasets, sklearn, np, pd]:
     print(f"{lib.__name__:>14}: {lib.__version__}")
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -199,29 +186,23 @@ else:
 # ## 2.6. Configuración
 #
 # Todos los hiperparámetros y *flags* están en esta celda. `SMOKE_TEST` reduce el problema a unas
-# decenas de ejemplos y unos pocos pasos de entrenamiento; se usa solo para comprobar en local que
+# decenas de ejemplos y unos pocos pasos de entrenamiento; se usó solo para comprobar en local que
 # el notebook se ejecuta de principio a fin (se activa con la variable de entorno
-# `CF_SMOKE_TEST=1`). En Colab debe quedar desactivado.
+# `CF_SMOKE_TEST=1`). En Colab queda desactivado.
 
 # %%
 CONFIG = {
     # Flags de ejecución
     "SMOKE_TEST": os.environ.get("CF_SMOKE_TEST") == "1",
     "RUN_TRAINING": True,
-    "RUN_LLM_BASELINE": True,
-    "RUN_ABLATIONS": False,
     "PUSH_TO_HUB": True,
     # Hub
-    "HF_USER": "AlexSA45",
     "HUB_MODEL_ID": "AlexSA45/modernbert-codeforces-tags-rating",
     "HUB_DATASET_ID": "AlexSA45/codeforces-tags-rating-processed",
     # Datos
     "DATASET_ID": "open-r1/codeforces",
-    "INCLUDE_NOTE": True,
     "MIN_TAG_COUNT": 100,     # mínimo de apariciones en train para conservar una etiqueta
     "TOP_K_TAGS": 20,         # máximo de etiquetas a conservar
-    "TEST_START_DATE": "2024-10-01",  # posterior al lanzamiento de Qwen2.5 (19/09/2024)
-    "MIN_TEST_SIZE": 500,     # tamaño mínimo de test para usar TEST_START_DATE como corte
     # Modelo
     "BASE_MODEL": "answerdotai/ModernBERT-base",
     "MAX_LEN": 1024,
@@ -236,24 +217,13 @@ CONFIG = {
     "WARMUP_RATIO": 0.1,
     "WEIGHT_DECAY": 0.01,
     "EARLY_STOPPING_PATIENCE": 2,
-    "GRADIENT_CHECKPOINTING": False,
-    "ABLATION_EPOCHS": 3,
     "SEED": 42,
-    # Baseline LLM
-    "LLM_MODEL": "Qwen/Qwen2.5-7B-Instruct",
-    "N_LLM_EVAL": 300,
-    "LLM_MAX_PROMPT_TOKENS": 1500,
-    "LLM_CACHE_FILE": "llm_baseline_responses.jsonl",
 }
 
-# Prueba rápida: pocos ejemplos, secuencias cortas, pocos pasos y un LLM diminuto
+# Prueba rápida: pocos ejemplos, secuencias cortas y pocos pasos
 SMOKE_SIZES = {"train": 64, "val": 32, "test": 32}
 if CONFIG["SMOKE_TEST"]:
-    CONFIG.update(
-        MAX_LEN=128, PUSH_TO_HUB=False, RUN_TRAINING=True, RUN_ABLATIONS=True,
-        LLM_MODEL="Qwen/Qwen2.5-0.5B-Instruct", N_LLM_EVAL=4, LLM_MAX_PROMPT_TOKENS=256,
-        LLM_CACHE_FILE="smoke_llm_responses.jsonl",
-    )
+    CONFIG.update(MAX_LEN=128, PUSH_TO_HUB=False, RUN_TRAINING=True)
 MAX_STEPS = 5 if CONFIG["SMOKE_TEST"] else -1
 
 SEED = CONFIG["SEED"]
@@ -263,10 +233,9 @@ print(json.dumps(CONFIG, indent=1))
 # %% [markdown]
 # ## 2.7. Autenticación en Hugging Face Hub
 #
-# El token se lee del secreto `HF_TOKEN` de Colab (o de la variable de entorno del mismo nombre),
-# nunca se escribe en el código. Como alternativa interactiva se puede usar
-# `huggingface_hub.notebook_login()`. Si no hay token, `PUSH_TO_HUB` pasa a `False` y el notebook
-# continúa: todos los datos y modelos de partida son públicos.
+# El token se lee del secreto `HF_TOKEN` de Colab (o de la variable de entorno del mismo nombre) y
+# nunca se escribe en el código. Si no hay token, `PUSH_TO_HUB` pasa a `False` y el notebook
+# continúa: los datos y el modelo de partida son públicos.
 
 # %%
 HF_TOKEN = os.environ.get("HF_TOKEN")
@@ -291,9 +260,9 @@ PUSH_TO_HUB = CONFIG["PUSH_TO_HUB"]
 #
 # Se usa [`open-r1/codeforces`](https://huggingface.co/datasets/open-r1/codeforces), publicado por
 # Hugging Face dentro del proyecto Open-R1. Contiene algo más de 10 000 problemas únicos de
-# Codeforces, desde los primeros concursos (2010) hasta principios de 2025, con el enunciado
-# dividido en campos, sus etiquetas y su rating. La *dataset card* declara la licencia
-# **CC-BY-4.0** en los metadatos y **ODC-By 4.0** en el texto; ambas permiten el uso con atribución.
+# Codeforces, desde 2010 hasta principios de 2025, con el enunciado dividido en campos, sus
+# etiquetas y su rating. La *dataset card* declara la licencia **CC-BY-4.0** en los metadatos y
+# **ODC-By 4.0** en el texto; ambas permiten el uso con atribución.
 #
 # **Campos usados y descartados.**
 #
@@ -302,15 +271,15 @@ PUSH_TO_HUB = CONFIG["PUSH_TO_HUB"]
 # | `title`, `description`, `input_format`, `output_format`, `interaction_format`, `note` | Entrada | Enunciado del problema |
 # | `tags` | Objetivo 1 | Etiquetas algorítmicas |
 # | `rating` | Objetivo 2 | Dificultad |
-# | `id`, `aliases`, `contest_id`, `contest_name`, `contest_start`, `index` | Auxiliar | Deduplicación y división temporal |
+# | `id`, `aliases`, `contest_id`, `contest_start`, `index` | Auxiliar | Deduplicación y división temporal |
 # | `editorial` | **Descartado** | Explica la solución: sería una fuga de información |
 # | `examples` | Descartado | Casos numéricos con poca señal y muchos tokens |
-# | `official_tests`, `generated_checker`, `generated_tests` | Descartado | Tests y validadores; muy pesados y sin relación con la tarea |
+# | `official_tests`, `generated_checker` | Descartado | Tests y validadores, sin relación con la tarea |
 #
 # **Lectura eficiente.** Los ficheros parquet del dataset pesan unos 2,7 GB, casi todo por la
-# columna `official_tests`. Como parquet es un formato columnar, leemos solo las columnas
-# necesarias con `HfFileSystem` y `pyarrow`, que descargan únicamente los fragmentos de esas
-# columnas (unos pocos MB). Así, además, `editorial` ni siquiera llega a descargarse.
+# columna `official_tests`. Como parquet guarda los datos por columnas, leemos solo las que
+# necesitamos con `HfFileSystem` y `pyarrow` y descargamos apenas unos MB. Así, además, el campo
+# `editorial` ni siquiera llega a descargarse.
 
 # %%
 COLUMNS = [
@@ -333,7 +302,7 @@ raw.head(3)
 # %% [markdown]
 # ## 3.2. Construcción del texto de entrada
 #
-# Unimos todos los *splits* originales (se vuelve a dividir por fecha en la sección 3.4) y
+# Unimos todos los *splits* originales (volveremos a dividir por fecha en la sección 3.4) y
 # construimos un único texto por problema, en este **orden deliberado**:
 #
 # ```
@@ -345,14 +314,13 @@ raw.head(3)
 # Note: ...
 # ```
 #
-# Las restricciones (por ejemplo, $1 \le n \le 2 \cdot 10^5$) aparecen casi siempre en la sección
-# de entrada, y son la pista más informativa sobre la complejidad que se espera de la solución.
-# Al ponerlas al principio, si el texto supera `MAX_LEN` tokens se trunca la narrativa del final y
-# nunca las restricciones.
+# Las restricciones (por ejemplo, $1 \le n \le 2 \cdot 10^5$) están casi siempre en la sección de
+# entrada y son la pista más informativa sobre la complejidad de la solución. Al ponerlas al
+# principio, si el texto supera `MAX_LEN` tokens se trunca la narrativa del final y no ellas.
 #
 # **Limpieza de LaTeX.** Codeforces escribe las fórmulas entre `$$$`. Sustituimos los comandos más
 # frecuentes por su equivalente legible (`\le` → `<=`, `10^{5}` → `10^5`, `\texttt{x}` → `x`...)
-# y **conservamos siempre los números**, porque son parte de la señal.
+# y **conservamos siempre los números**, porque forman parte de la señal.
 
 # %%
 LATEX_RULES = [
@@ -363,15 +331,10 @@ LATEX_RULES = [
     (r"\\(?:neq|ne)(?![a-zA-Z])", "!="),
     (r"\\(?:cdot|times)(?![a-zA-Z])", "*"),
     (r"\\(?:ldots|dots|cdots)(?![a-zA-Z])", "..."),
-    (r"\\frac\{([^{}]*)\}\{([^{}]*)\}", r"(\1)/(\2)"),
-    (r"\\(?:texttt|textbf|textit|text|mathit|mathrm|mathbf|operatorname)\{([^{}]*)\}", r"\1"),
+    (r"\\(?:texttt|textbf|textit|text|mathit|mathrm|operatorname)\{([^{}]*)\}", r"\1"),
     (r"\^\{([^{}]*)\}", r"^\1"),                          # 10^{5} -> 10^5
-    (r"_\{([^{}]*)\}", r"_\1"),                           # a_{i+1} -> a_i+1
-    (r"\\([{}%&_#$])", r"\1"),                            # caracteres escapados
-    (r"\\[,;:! ]", " "),                                  # espacios de LaTeX
-    (r"\\(?:left|right)(?![a-zA-Z])", ""),
     (r"\\([a-zA-Z]+)", r"\1"),                            # resto: \gcd -> gcd, \max -> max
-    (r"\s+", " "),
+    (r"\s+", " "),                                        # colapsar espacios
 ]
 LATEX_RULES = [(re.compile(p), r) for p, r in LATEX_RULES]
 
@@ -385,7 +348,7 @@ def clean_latex(text):
     return text.strip()
 
 
-def build_text(row, include_note=True):
+def build_text(row):
     """Concatena los campos del enunciado en el orden descrito arriba."""
     parts = [
         ("Title", row["title"]),
@@ -393,9 +356,8 @@ def build_text(row, include_note=True):
         ("Output", row["output_format"]),
         ("Interaction", row["interaction_format"]),
         ("Statement", row["description"]),
+        ("Note", row["note"]),
     ]
-    if include_note:
-        parts.append(("Note", row["note"]))
     lines = []
     for name, value in parts:
         value = clean_latex(value)
@@ -404,7 +366,7 @@ def build_text(row, include_note=True):
     return "\n".join(lines)
 
 
-raw["text"] = raw.apply(build_text, axis=1, include_note=CONFIG["INCLUDE_NOTE"])
+raw["text"] = raw.apply(build_text, axis=1)
 
 example = raw[raw["input_format"].fillna("").str.contains(r"\\le")].iloc[0]
 print("ANTES (input_format):\n", example["input_format"][:400])
@@ -416,13 +378,13 @@ print("\nTEXTO COMPLETO (primeros 700 caracteres):\n", example["text"][:700])
 #
 # - Se eliminan los problemas **sin enunciado** (`description` vacía).
 # - **Duplicados por alias:** los problemas compartidos entre la Div. 1 y la Div. 2 se registran en
-#   `aliases`. Se agrupan con una clave canónica (el menor identificador del grupo) y se conserva
-#   la aparición más antigua.
-# - **Duplicados por texto:** además, se calcula un *hash* del texto normalizado (minúsculas y sin
+#   `aliases`. Se agrupan con una clave común (el menor identificador del grupo) y se conserva la
+#   aparición más antigua.
+# - **Duplicados por texto:** se calcula un *hash* del texto normalizado (minúsculas y sin
 #   espacios) y también se conserva solo la aparición más antigua.
 #
 # Si un mismo enunciado apareciera en train y en test, el modelo podría memorizarlo y la
-# evaluación sería optimista; la deduplicación evita esa fuga.
+# evaluación sería demasiado optimista; la deduplicación evita esa fuga.
 
 # %%
 df = raw[raw["description"].fillna("").str.strip() != ""].copy()
@@ -433,9 +395,8 @@ all_ids = set(df["id"])
 
 
 def canonical_id(row):
-    group = [row["id"]] + [a for a in (row["aliases"] if row["aliases"] is not None else [])
-                           if a in all_ids]
-    return min(group)
+    aliases = row["aliases"] if row["aliases"] is not None else []
+    return min([row["id"]] + [a for a in aliases if a in all_ids])
 
 
 df["canonical_id"] = df.apply(canonical_id, axis=1)
@@ -462,39 +423,21 @@ print(f"Problemas restantes:                {len(df)}")
 # %% [markdown]
 # ## 3.4. División temporal
 #
-# La división es **por fecha del concurso, nunca aleatoria**: entrenamos con problemas antiguos y
-# evaluamos con problemas más recientes, igual que ocurriría al usar el modelo en un concurso
-# nuevo. Además, una división aleatoria mezclaría problemas del mismo concurso, que comparten
-# autores y estilo, entre train y test.
-#
-# El plan inicial era que test empezara el 2024-10-01, después del lanzamiento de Qwen2.5
-# (19/09/2024), para que el LLM usado como baseline no pudiera haber visto esos problemas. Solo se
-# aplica si test queda con al menos `MIN_TEST_SIZE` problemas; si no, se usan cuantiles 80/10/10.
-# En ese caso, el subconjunto en el que se evalúa el LLM (sección 5) se toma **solo de los
-# problemas de test posteriores al 2024-10-01**, para mantener la comparación libre de
-# contaminación.
+# La división es **por fecha del concurso, nunca aleatoria**: el 80 % más antiguo para train, el
+# 10 % siguiente para validación y el 10 % más reciente para test. Así se entrena con problemas
+# antiguos y se evalúa con problemas nuevos, igual que ocurriría al usar el modelo en un concurso
+# futuro. Una división aleatoria mezclaría problemas del mismo concurso, que comparten autores y
+# estilo, entre train y test.
 
 # %%
-test_start = pd.Timestamp(CONFIG["TEST_START_DATE"])
-n_after = int((df["date"] >= test_start).sum())
 dates = df["date"].sort_values().reset_index(drop=True)
-
-if n_after >= CONFIG["MIN_TEST_SIZE"]:
-    test_cut = test_start
-    val_cut = dates.iloc[int(len(df[df["date"] < test_cut]) * 8 / 9)]
-    split_rule = f"test desde {CONFIG['TEST_START_DATE']}"
-else:
-    val_cut = dates.iloc[int(0.8 * len(df))]
-    test_cut = dates.iloc[int(0.9 * len(df))]
-    split_rule = (f"cuantiles 80/10/10 (solo {n_after} problemas desde "
-                  f"{CONFIG['TEST_START_DATE']} < {CONFIG['MIN_TEST_SIZE']})")
-
+val_cut = dates.iloc[int(0.8 * len(df))]
+test_cut = dates.iloc[int(0.9 * len(df))]
 df["split"] = np.where(df["date"] < val_cut, "train",
                        np.where(df["date"] < test_cut, "val", "test"))
 
 # Comprobación: ningún concurso queda repartido entre dos splits
 assert (df.groupby("contest_id")["split"].nunique() == 1).all()
-print("Regla:", split_rule)
 print("Corte val :", val_cut)
 print("Corte test:", test_cut)
 
@@ -504,12 +447,12 @@ print("Corte test:", test_cut)
 # Todo lo que se "aprende" de los datos se calcula **solo con train**:
 #
 # - **Vocabulario:** etiquetas con al menos `MIN_TAG_COUNT` apariciones en train, hasta un máximo
-#   de `TOP_K_TAGS`. Las etiquetas muy raras (`2-sat`, `schedules`...) tienen demasiados pocos
-#   ejemplos para aprenderse. Se descartan los problemas que se quedan sin ninguna etiqueta del
+#   de `TOP_K_TAGS`. Las etiquetas muy raras (`2-sat`, `schedules`...) tienen demasiado pocos
+#   ejemplos para aprenderlas. Se descartan los problemas que se quedan sin ninguna etiqueta del
 #   vocabulario.
 # - **Rating:** se normaliza con *z-score* usando la media y la desviación típica de train. Los
-#   problemas sin rating se conservan (aportan a las etiquetas) con `rating_mask = 0`, de modo que
-#   no contribuyen ni a la pérdida ni a las métricas de rating.
+#   problemas sin rating se conservan (sirven para las etiquetas) con `rating_mask = 0`, de modo
+#   que no cuentan ni en la pérdida ni en las métricas de rating.
 
 # %%
 train_tag_counts = collections.Counter(
@@ -540,25 +483,10 @@ RATING_MEAN, RATING_STD = float(train_ratings.mean()), float(train_ratings.std()
 df["rating_z"] = ((df["rating"] - RATING_MEAN) / RATING_STD).fillna(0.0).astype(np.float32)
 print(f"Rating en train: media={RATING_MEAN:.1f}, desviación={RATING_STD:.1f}")
 
-# Subconjunto fijo de test para el LLM: solo problemas posteriores a TEST_START_DATE
-llm_pool = df[(df["split"] == "test") & (df["date"] >= test_start)]
-LLM_IDS = sorted(llm_pool.sample(n=min(CONFIG["N_LLM_EVAL"], len(llm_pool)),
-                                 random_state=SEED)["id"])
-print(f"Subconjunto del LLM: {len(LLM_IDS)} problemas de {len(llm_pool)} posibles")
-
 # Prueba rápida: muestras pequeñas (el vocabulario ya se calculó con todo train)
 if CONFIG["SMOKE_TEST"]:
-    parts = []
-    for name, size in SMOKE_SIZES.items():
-        part = df[df["split"] == name]
-        if name == "test":  # incluimos los problemas del LLM para probar ese código
-            part = pd.concat([part[part["id"].isin(LLM_IDS)],
-                              part[~part["id"].isin(LLM_IDS)].sample(size - len(LLM_IDS),
-                                                                    random_state=SEED)])
-        else:
-            part = part.sample(size, random_state=SEED)
-        parts.append(part)
-    df = pd.concat(parts).sort_values("contest_start").reset_index(drop=True)
+    df = pd.concat([df[df["split"] == s].sample(n, random_state=SEED)
+                    for s, n in SMOKE_SIZES.items()]).reset_index(drop=True)
 
 SPLITS = ["train", "val", "test"]
 data = {s: df[df["split"] == s].reset_index(drop=True) for s in SPLITS}
@@ -583,11 +511,11 @@ summary = pd.DataFrame({
 summary
 
 # %% [markdown]
-# <!-- TODO: completar tras ejecución en Colab (comentario sobre tamaños y fechas de los splits) -->
+# <!-- TODO (autor): comentario sobre tamaños y fechas de los splits -->
 
 # %% [markdown]
-# Definimos un estilo común para las figuras: una paleta categórica fija (train, val y test
-# siempre con el mismo color), rejilla discreta y sin bordes superfluos.
+# Definimos un estilo común para las figuras: cada split y cada modelo tiene siempre el mismo
+# color.
 
 # %%
 COLORS = {"train": "#2a78d6", "val": "#eb6834", "test": "#1baf7a"}
@@ -619,7 +547,7 @@ plt.show()
 tag_freq
 
 # %% [markdown]
-# <!-- TODO: completar tras ejecución en Colab (comentario sobre el desbalance de etiquetas) -->
+# <!-- TODO (autor): comentario sobre el desbalance de etiquetas -->
 
 # %% [markdown]
 # ### Número de etiquetas por problema y distribución del rating
@@ -641,13 +569,13 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# <!-- TODO: completar tras ejecución en Colab (¿hay desplazamiento temporal del rating?) -->
+# <!-- TODO (autor): ¿cambia la distribución del rating con el tiempo? -->
 
 # %% [markdown]
 # ### Longitud en tokens
 #
 # Tokenizamos los textos completos (sin truncar) con el tokenizador de ModernBERT para decidir
-# `MAX_LEN` con datos y cuantificar cuánto texto se pierde al truncar.
+# `MAX_LEN` con datos y medir cuánto texto se pierde al truncar.
 
 # %%
 tokenizer = AutoTokenizer.from_pretrained(CONFIG["BASE_MODEL"])
@@ -673,35 +601,13 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# <!-- TODO: completar tras ejecución en Colab (% truncado con 512 y con 1024 tokens) -->
-
-# %% [markdown]
-# ### Co-ocurrencia de etiquetas
-#
-# El mapa muestra $P(B \mid A)$: de los problemas de train con la etiqueta de la fila $A$, qué
-# fracción tiene también la etiqueta de la columna $B$.
-
-# %%
-Y_train = np.stack(data["train"]["y_tags"])
-co = Y_train.T @ Y_train
-cond = co / np.maximum(co.diagonal()[:, None], 1)
-np.fill_diagonal(cond, np.nan)
-
-fig, ax = plt.subplots(figsize=(10, 8))
-sns.heatmap(cond, xticklabels=TAGS, yticklabels=TAGS, cmap="Blues", vmin=0, vmax=0.6,
-            cbar_kws={"label": "P(columna | fila)"}, linewidths=0.5, linecolor="white", ax=ax)
-ax.set_title("Co-ocurrencia condicional de etiquetas (train)")
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# <!-- TODO: completar tras ejecución en Colab (pares de etiquetas más asociados) -->
+# <!-- TODO (autor): % de textos truncados con 512 y con 1024 tokens -->
 
 # %% [markdown]
 # ### Rating por etiqueta
 #
-# Si las etiquetas se relacionan con la dificultad, compartir el *encoder* entre ambas tareas puede
-# ayudar: es la motivación del enfoque multitarea.
+# Si las etiquetas se relacionan con la dificultad, compartir el *encoder* entre las dos tareas
+# tiene sentido: es la motivación del enfoque multitarea.
 
 # %%
 rated = data["train"][data["train"]["rating_mask"] == 1]
@@ -715,7 +621,7 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# <!-- TODO: completar tras ejecución en Colab (etiquetas más fáciles y más difíciles) -->
+# <!-- TODO (autor): etiquetas más fáciles y más difíciles -->
 
 # %% [markdown]
 # ## 3.7. Tokenización y datasets para el `Trainer`
@@ -723,15 +629,12 @@ plt.show()
 # Tokenizamos con `truncation=True` y `max_length=MAX_LEN`, **sin padding**: el relleno se añade en
 # cada lote, solo hasta la longitud del texto más largo del lote (*padding dinámico*), lo que
 # ahorra mucho cómputo frente al `padding="max_length"` del notebook 6. Guardamos también la
-# longitud (`length`) para agrupar textos de longitud similar en el mismo lote.
-#
-# La función admite otra columna de texto y otra longitud máxima: se reutiliza en las ablaciones.
-# Para la ablación A2 se crea una variante del texto donde **cada número se sustituye por `NUM`**.
+# longitud (`length`) para agrupar textos de longitud parecida en el mismo lote.
 
 # %%
-def to_hf_dataset(frame, text_col="text", max_len=MAX_LEN):
+def to_hf_dataset(frame):
     """Tokeniza un split y lo convierte en un `Dataset` con las etiquetas de ambas tareas."""
-    enc = tokenizer(list(frame[text_col]), truncation=True, max_length=max_len)
+    enc = tokenizer(list(frame["text"]), truncation=True, max_length=MAX_LEN)
     return Dataset.from_dict({
         "input_ids": enc["input_ids"],
         "attention_mask": enc["attention_mask"],
@@ -742,16 +645,12 @@ def to_hf_dataset(frame, text_col="text", max_len=MAX_LEN):
     })
 
 
-for s in SPLITS:
-    data[s]["text_num"] = data[s]["text"].str.replace(r"\d+", "NUM", regex=True)
-
 hf = {s: to_hf_dataset(data[s]) for s in SPLITS}
 print(hf["train"])
-print("Ejemplo de texto con números sustituidos:\n", data["train"]["text_num"].iloc[0][:300])
 
 # %% [markdown]
 # Subimos al Hub el dataset ya procesado (texto limpio, etiquetas conservadas, rating y split), para
-# que pueda reutilizarse sin repetir el preprocesamiento.
+# poder reutilizarlo sin repetir el preprocesamiento.
 
 # %%
 if PUSH_TO_HUB:
@@ -778,15 +677,15 @@ if PUSH_TO_HUB:
 #                         └─► Dropout ─► Linear(768, 1) ──────► rating normalizado
 # ```
 #
-# - **Mean pooling** sobre `attention_mask`: promedia los vectores de todos los tokens reales. Con
-#   textos largos, es más robusto que usar solo el primer token (`[CLS]`).
+# - **Mean pooling** sobre `attention_mask`: promedia los vectores de todos los tokens reales del
+#   texto.
 # - Heredamos de `PretrainedConfig` y `PreTrainedModel`, con lo que funcionan `save_pretrained`,
 #   `push_to_hub` y `from_pretrained`. La configuración guarda todo lo necesario para usar el modelo
 #   sin el notebook: nombres de las etiquetas, `pos_weight`, media y desviación del rating y
 #   umbrales de decisión por etiqueta.
 # - En `__init__` el *encoder* se crea **vacío** con `AutoModel.from_config`; los pesos
 #   preentrenados se cargan solo en `from_base`, al empezar el entrenamiento. Así, al cargar el
-#   modelo ya ajustado con `from_pretrained`, no se descargan ni sobrescriben pesos dos veces.
+#   modelo ya ajustado con `from_pretrained`, no se descargan los pesos dos veces.
 #
 # ## 4.2. Función de pérdida
 #
@@ -801,9 +700,9 @@ if PUSH_TO_HUB:
 # - $z$ son los *logits* de las etiquetas e $y$ el vector *multi-hot* real.
 # - $w_k = \min(\text{neg}_k / \text{pos}_k,\ 10)$ es el peso de los positivos de la etiqueta
 #   $k$, calculado en train. Compensa el desbalance: sin él, el modelo aprendería a no predecir
-#   nunca las etiquetas raras. El recorte a 10 evita pesos extremos.
+#   casi nunca las etiquetas raras. El recorte a 10 evita pesos extremos.
 # - $\hat r_i$ y $r_i$ son el rating predicho y el real, ambos normalizados (*z-score*).
-# - $m_i$ es `rating_mask`: los problemas sin rating no contribuyen a la regresión.
+# - $m_i$ es `rating_mask`: los problemas sin rating no cuentan en la regresión.
 # - $\lambda$ (`LAMBDA_RATING` = 0,5) equilibra las dos tareas.
 
 # %%
@@ -840,7 +739,6 @@ class CFMultiTaskModel(PreTrainedModel):
 
     config_class = CFMultiTaskConfig
     base_model_prefix = "cf_multitask"
-    supports_gradient_checkpointing = True
     _supports_sdpa = True
 
     def __init__(self, config):
@@ -898,6 +796,7 @@ class CFMultiTaskModel(PreTrainedModel):
 
 
 # pos_weight por etiqueta, calculado solo con train: w_k = min(neg_k / pos_k, 10)
+Y_train = np.stack(data["train"]["y_tags"])
 pos = Y_train.sum(axis=0)
 POS_WEIGHT = np.minimum((len(Y_train) - pos) / np.maximum(pos, 1),
                         CONFIG["POS_WEIGHT_CLIP"]).round(3).tolist()
@@ -910,11 +809,11 @@ pd.DataFrame({"positivos en train": pos.astype(int), "pos_weight": POS_WEIGHT}, 
 # del lote y apila las tres etiquetas en tensores `float32`.
 #
 # Las métricas se definen una sola vez y se usan para **todos** los modelos (el ajustado y los
-# baselines), de modo que la comparación es justa:
+# baselines), para que la comparación sea justa:
 #
 # - **Etiquetas:** F1 micro (dominado por las etiquetas frecuentes), F1 macro (media por etiqueta,
-#   sensible a las raras), F1 por muestra, mAP macro (calidad del ranking, independiente del
-#   umbral) y *subset accuracy* (acertar exactamente el conjunto de etiquetas).
+#   sensible a las raras), F1 por muestra, mAP macro (calidad del orden de las probabilidades,
+#   independiente del umbral) y *subset accuracy* (acertar exactamente el conjunto de etiquetas).
 # - **Rating** (en la escala original y solo con `rating_mask = 1`): MAE, RMSE, correlación de
 #   Spearman y % de predicciones con error absoluto ≤ 200.
 
@@ -990,72 +889,62 @@ def compute_metrics(eval_pred):
 # | `fp16` | True | Precisión mixta; la T4 no soporta bf16 |
 # | `train_sampling_strategy` | `group_by_length` | Agrupa textos de longitud parecida: menos padding |
 # | `metric_for_best_model` | `f1_macro` (val, umbral 0.5) | Se queda con la mejor época |
-# | `hub_strategy` | `every_save` | Sube el modelo al Hub en cada época (tolerancia a desconexiones) |
-#
-# La función `train_multitask` encapsula la creación del modelo y el entrenamiento para poder
-# reutilizarla en las ablaciones (sección 5.9).
+# | `hub_strategy` | `every_save` | Sube el modelo al Hub en cada época |
 
 # %%
-def train_multitask(run_name, train_ds, val_ds, lambda_rating=CONFIG["LAMBDA_RATING"],
-                    epochs=CONFIG["EPOCHS"], push=False):
-    """Entrena un CFMultiTaskModel desde ModernBERT-base y devuelve (trainer, segundos)."""
-    set_seed(SEED)
+training_args = TrainingArguments(
+    output_dir="runs/main",
+    num_train_epochs=CONFIG["EPOCHS"],
+    max_steps=MAX_STEPS,
+    learning_rate=CONFIG["LR"],
+    per_device_train_batch_size=CONFIG["BATCH_SIZE"],
+    per_device_eval_batch_size=2 * CONFIG["BATCH_SIZE"],
+    gradient_accumulation_steps=CONFIG["GRAD_ACCUM"],
+    warmup_steps=CONFIG["WARMUP_RATIO"],          # float < 1: proporción de pasos
+    lr_scheduler_type="linear",
+    weight_decay=CONFIG["WEIGHT_DECAY"],
+    fp16=torch.cuda.is_available(),
+    train_sampling_strategy="group_by_length",
+    eval_strategy="epoch",
+    save_strategy="epoch",
+    save_total_limit=2,
+    load_best_model_at_end=True,
+    metric_for_best_model="f1_macro",
+    greater_is_better=True,
+    label_names=["labels_tags", "labels_rating", "rating_mask"],
+    remove_unused_columns=False,
+    logging_steps=1 if CONFIG["SMOKE_TEST"] else 50,
+    report_to="none",
+    seed=SEED,
+    push_to_hub=PUSH_TO_HUB,
+    hub_model_id=CONFIG["HUB_MODEL_ID"] if PUSH_TO_HUB else None,
+    hub_strategy="every_save",
+)
+
+# %% [markdown]
+# ## 4.5. Ajuste fino
+#
+# Con `RUN_TRAINING = True` se crea el modelo a partir de ModernBERT-base y se entrena; con
+# `False` se descarga el ya ajustado desde el Hub junto con el historial del entrenamiento. Al
+# terminar, el `Trainer` recarga los pesos de la **mejor época** según el F1 macro de validación.
+
+# %%
+if CONFIG["RUN_TRAINING"]:
     model = CFMultiTaskModel.from_base(
-        CONFIG["BASE_MODEL"], tag_names=TAGS, lambda_rating=lambda_rating,
+        CONFIG["BASE_MODEL"], tag_names=TAGS, lambda_rating=CONFIG["LAMBDA_RATING"],
         pos_weight=POS_WEIGHT, rating_mean=RATING_MEAN, rating_std=RATING_STD,
         dropout=CONFIG["DROPOUT"])
-    args = TrainingArguments(
-        output_dir=f"runs/{run_name}",
-        num_train_epochs=epochs,
-        max_steps=MAX_STEPS,
-        learning_rate=CONFIG["LR"],
-        per_device_train_batch_size=CONFIG["BATCH_SIZE"],
-        per_device_eval_batch_size=2 * CONFIG["BATCH_SIZE"],
-        gradient_accumulation_steps=CONFIG["GRAD_ACCUM"],
-        warmup_steps=CONFIG["WARMUP_RATIO"],          # float < 1: proporción de pasos
-        lr_scheduler_type="linear",
-        weight_decay=CONFIG["WEIGHT_DECAY"],
-        fp16=torch.cuda.is_available(),
-        gradient_checkpointing=CONFIG["GRADIENT_CHECKPOINTING"],
-        train_sampling_strategy="group_by_length",
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        save_total_limit=2,
-        load_best_model_at_end=True,
-        metric_for_best_model="f1_macro",
-        greater_is_better=True,
-        label_names=["labels_tags", "labels_rating", "rating_mask"],
-        remove_unused_columns=False,
-        logging_steps=1 if CONFIG["SMOKE_TEST"] else 50,
-        report_to="none",
-        seed=SEED,
-        push_to_hub=push,
-        hub_model_id=CONFIG["HUB_MODEL_ID"] if push else None,
-        hub_strategy="every_save",
-    )
     trainer = Trainer(
-        model=model, args=args, train_dataset=train_ds, eval_dataset=val_ds,
+        model=model, args=training_args, train_dataset=hf["train"], eval_dataset=hf["val"],
         data_collator=collator, processing_class=tokenizer, compute_metrics=compute_metrics,
         callbacks=[EarlyStoppingCallback(CONFIG["EARLY_STOPPING_PATIENCE"])],
     )
     t0 = time.time()
     trainer.train()
-    return trainer, time.time() - t0
-
-# %% [markdown]
-# ## 4.5. Ajuste fino
-#
-# Con `RUN_TRAINING = True` se entrena el modelo; con `False` se descarga el ya ajustado desde el
-# Hub junto con el historial del entrenamiento. Al terminar, el `Trainer` recarga los pesos de la
-# **mejor época** según el F1 macro de validación.
-
-# %%
-model_params = None
-if CONFIG["RUN_TRAINING"]:
-    trainer, train_seconds = train_multitask("main", hf["train"], hf["val"], push=PUSH_TO_HUB)
+    train_seconds = time.time() - t0
     model = trainer.model
     log_history = trainer.state.log_history
-    train_info = {"seconds": train_seconds, "best_checkpoint": trainer.state.best_model_checkpoint,
+    train_info = {"seconds": train_seconds,
                   "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"}
     print(f"Entrenamiento completado en {train_seconds / 60:.1f} min en {train_info['gpu']}")
 else:
@@ -1068,8 +957,8 @@ else:
           f"(entrenado en {train_info['seconds'] / 60:.1f} min en {train_info['gpu']})")
 
 model = model.to(DEVICE).eval()
-model_params = sum(p.numel() for p in model.parameters())
-print(f"Parámetros del modelo: {model_params / 1e6:.1f} M (todos entrenables)")
+print(f"Parámetros del modelo: {sum(p.numel() for p in model.parameters()) / 1e6:.1f} M "
+      "(todos entrenables)")
 
 # %% [markdown]
 # ### Curvas de entrenamiento
@@ -1102,7 +991,7 @@ eval_cols = ["eval_loss", "eval_f1_micro", "eval_f1_macro", "eval_map_macro", "e
 eval_logs[eval_cols].round(4)
 
 # %% [markdown]
-# <!-- TODO: completar tras ejecución en Colab (tiempo real, época elegida, ¿sobreajuste?) -->
+# <!-- TODO (autor): tiempo real de entrenamiento, época elegida, ¿hay sobreajuste? -->
 
 # %% [markdown]
 # # 5. Resultados y discusión
@@ -1183,9 +1072,9 @@ if PUSH_TO_HUB and CONFIG["RUN_TRAINING"]:
 # %% [markdown]
 # ### Uso del modelo publicado
 #
-# Esta celda carga el modelo **desde el Hub** (sin depender del entrenamiento anterior) y predice
-# las etiquetas y la dificultad de un enunciado de test. Es todo lo que necesita un usuario del
-# modelo: el tokenizador, la clase `CFMultiTaskModel` y los umbrales guardados en la configuración.
+# Esta celda carga el modelo **desde el Hub** y predice las etiquetas y la dificultad de un
+# enunciado de test. Es todo lo que necesita un usuario del modelo: el tokenizador, la clase
+# `CFMultiTaskModel` y los umbrales guardados en la configuración.
 
 # %%
 def predict_problem(model, text):
@@ -1217,21 +1106,21 @@ if demo_model is not model:
 # ## 5.2. Baselines
 #
 # Para saber si el ajuste fino aporta algo hay que compararlo con referencias razonables. Todas se
-# evalúan sobre el **mismo test** y con las **mismas funciones de métricas**, y todas usan umbrales
-# por etiqueta ajustados en validación:
+# evalúan sobre el **mismo test**, con las **mismas métricas** y con umbrales por etiqueta
+# ajustados en validación:
 #
-# - **B0, trivial.** Cada etiqueta recibe como puntuación su frecuencia en train; el rating es
+# - **B0, trivial.** Cada etiqueta recibe como puntuación su frecuencia en train y el rating es
 #   siempre la media de train. Es el mínimo que cualquier modelo debe superar.
 # - **B1, TF-IDF + modelos lineales.** Bolsa de unigramas y bigramas con regresión logística
-#   *one-vs-rest* (`class_weight="balanced"`, con `C` elegido en validación) y `Ridge` para el
-#   rating. Es el baseline clásico, y fuerte, en clasificación de textos.
+#   (una por etiqueta, `class_weight="balanced"`, con `C` elegido en validación) y regresión
+#   `Ridge` para el rating. Es el baseline clásico en clasificación de textos.
 # - **B2, ModernBERT sin ajustar (*linear probe*).** Es el **modelo base sin ajustar**: se extraen
 #   los *embeddings* de ModernBERT-base **congelado** (mismo *mean pooling* y `MAX_LEN`) y se
-#   entrenan encima los mismos modelos lineales. Aísla el valor de ajustar el *encoder* frente a
+#   entrenan encima los mismos modelos lineales. Mide cuánto aporta ajustar el *encoder* frente a
 #   usar solo sus representaciones preentrenadas.
 
 # %%
-results = {}  # nombre -> dict con puntuaciones y predicciones de val y test
+results = {}  # nombre -> puntuaciones, ratings y umbrales de val y test
 
 
 def register(name, val_scores, test_scores, val_rating, test_rating):
@@ -1244,7 +1133,6 @@ def register(name, val_scores, test_scores, val_rating, test_rating):
 
 
 register("ModernBERT ajustado", ft_val_probs, ft_test_probs, ft_val_rating, ft_test_rating)
-results["ModernBERT ajustado"]["thresholds"] = ft_thresholds
 
 # B0: frecuencia a priori de cada etiqueta y media del rating
 prior = Y["train"].mean(axis=0)
@@ -1254,10 +1142,9 @@ register("B0 Trivial",
 
 
 def fit_linear_baselines(X_train, X_val, X_test, name):
-    """Regresión logística one-vs-rest (C elegido por mAP en val) + Ridge para el rating."""
+    """Regresión logística por etiqueta (C elegido por mAP en val) + Ridge para el rating."""
     best = None
     for C in [0.1, 1, 10]:
-        # Un solo proceso: en paralelo cada worker recarga torch y puede agotar la RAM
         clf = OneVsRestClassifier(LogisticRegression(
             C=C, class_weight="balanced", solver="liblinear", max_iter=2000))
         clf.fit(X_train, Y["train"])
@@ -1282,7 +1169,7 @@ for s in ["val", "test"]:
 fit_linear_baselines(X_tfidf["train"], X_tfidf["val"], X_tfidf["test"], "TF-IDF + LR")
 
 # %% [markdown]
-# Para el *linear probe* extraemos los *embeddings* congelados de ModernBERT-base en fp16 y sin
+# Para el *linear probe* extraemos los *embeddings* de ModernBERT-base congelado, en fp16 y sin
 # gradientes, con el mismo *mean pooling* que el modelo ajustado.
 
 # %%
@@ -1306,7 +1193,6 @@ t0 = time.time()
 X_emb = {s: embed(frozen, hf[s]) for s in SPLITS}
 print(f"Embeddings extraídos en {time.time() - t0:.0f} s; forma de train: {X_emb['train'].shape}")
 del frozen
-gc.collect()
 torch.cuda.empty_cache()
 
 scaler = StandardScaler().fit(X_emb["train"])
@@ -1314,177 +1200,34 @@ X_emb = {s: scaler.transform(x) for s, x in X_emb.items()}
 fit_linear_baselines(X_emb["train"], X_emb["val"], X_emb["test"], "Linear probe")
 
 # %% [markdown]
-# ## 5.3. Baseline LLM zero-shot (B3)
+# ## 5.3. Tabla principal de resultados
 #
-# Comparamos también con un LLM generalista sin ajustar, al que se le pide directamente la
-# respuesta: `Qwen/Qwen2.5-7B-Instruct` cuantizado a 4 bits (NF4, como en el notebook 7).
-#
-# - Se evalúa en un **subconjunto fijo** de problemas de test, todos publicados **después del
-#   2024-10-01**, posteriores al lanzamiento de Qwen2.5 (19/09/2024): el modelo no puede haberlos
-#   visto durante su entrenamiento.
-# - Decodificación *greedy*, `max_new_tokens=80` y enunciado truncado a 1500 tokens.
-# - Un *parser* robusto extrae el primer bloque `{...}`, descarta las etiquetas fuera de la lista y
-#   recorta el rating a [800, 3500]. Si falla, se usan etiquetas vacías y la media de train.
-# - Las respuestas crudas se guardan en un JSONL que se sube al Hub, de modo que la inferencia se
-#   puede reanudar tras una desconexión y no hay que repetirla.
-#
-# Como el LLM devuelve un conjunto de etiquetas y no probabilidades, para él no se calcula mAP ni se
-# ajustan umbrales.
-
-# %%
-LLM_PROMPT = """You are an expert competitive programmer. Read the Codeforces problem below and \
-answer ONLY with a JSON object of the form {{"tags": [...], "rating": <int>}}.
-- "tags": the algorithmic techniques needed, chosen ONLY from this list: {tag_list}
-- "rating": the Codeforces difficulty rating, an integer between 800 and 3500.
-
-Problem:
-{text}"""
-
-
-def load_llm_cache(path):
-    """Lee las respuestas ya generadas: primero del Hub, si existe; si no, del disco."""
-    try:
-        hub_path = hf_hub_download(CONFIG["HUB_DATASET_ID"], path, repo_type="dataset")
-        with open(hub_path) as src, open(path, "w") as dst:
-            dst.write(src.read())
-    except Exception:
-        pass
-    if not os.path.exists(path):
-        return {}
-    with open(path) as fh:
-        rows = [json.loads(line) for line in fh if line.strip()]
-    return {r["id"]: r["response"] for r in rows}
-
-
-def upload_llm_cache(path):
-    if PUSH_TO_HUB:
-        HfApi().upload_file(path_or_fileobj=path, path_in_repo=path,
-                            repo_id=CONFIG["HUB_DATASET_ID"], repo_type="dataset")
-
-
-def run_llm_baseline(frame, cache_path):
-    """Genera (o reanuda) las respuestas del LLM para los problemas de `frame`."""
-    from transformers import AutoModelForCausalLM, BitsAndBytesConfig
-
-    cache = load_llm_cache(cache_path)
-    pending = frame[~frame["id"].isin(cache)]
-    print(f"Respuestas en caché: {len(cache)}; pendientes: {len(pending)}")
-    if len(pending) == 0:
-        return cache
-
-    bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
-                             bnb_4bit_compute_dtype=torch.float16)
-    llm_tok = AutoTokenizer.from_pretrained(CONFIG["LLM_MODEL"])
-    llm = AutoModelForCausalLM.from_pretrained(CONFIG["LLM_MODEL"], quantization_config=bnb,
-                                               device_map="auto")
-    llm.eval()
-    t0 = time.time()
-    with open(cache_path, "a") as fh:
-        for i, row in enumerate(pending.itertuples(), 1):
-            ids = llm_tok(row.text, add_special_tokens=False)["input_ids"]
-            text = llm_tok.decode(ids[:CONFIG["LLM_MAX_PROMPT_TOKENS"]])
-            prompt = LLM_PROMPT.format(tag_list=", ".join(TAGS), text=text)
-            chat = llm_tok.apply_chat_template([{"role": "user", "content": prompt}],
-                                               tokenize=False, add_generation_prompt=True)
-            enc = llm_tok(chat, return_tensors="pt").to(llm.device)
-            with torch.no_grad():
-                gen = llm.generate(**enc, max_new_tokens=80, do_sample=False,
-                                   pad_token_id=llm_tok.eos_token_id)
-            response = llm_tok.decode(gen[0, enc["input_ids"].shape[1]:],
-                                      skip_special_tokens=True)
-            cache[row.id] = response
-            fh.write(json.dumps({"id": row.id, "response": response}) + "\n")
-            fh.flush()
-            if i % 25 == 0 or i == len(pending):
-                upload_llm_cache(cache_path)
-                print(f"  {i}/{len(pending)} ({(time.time() - t0) / i:.1f} s/problema)")
-    del llm
-    gc.collect()
-    torch.cuda.empty_cache()
-    return cache
-
-
-def parse_llm_response(response):
-    """Extrae etiquetas y rating del JSON de la respuesta; devuelve también si falló."""
-    match = re.search(r"\{.*?\}", response, flags=re.DOTALL)
-    try:
-        obj = json.loads(match.group(0))
-        tags = [t for t in obj.get("tags", []) if t in TAG2IDX]
-        rating = float(np.clip(float(obj["rating"]), 800, 3500))
-        return tags, rating, False
-    except Exception:
-        return [], RATING_MEAN, True
-
-
-llm_frame = data["test"][data["test"]["id"].isin(LLM_IDS)]
-llm_cache = {}
-if CONFIG["RUN_LLM_BASELINE"]:
-    llm_cache = run_llm_baseline(llm_frame, CONFIG["LLM_CACHE_FILE"])
-else:  # sin generar: se reutilizan las respuestas ya subidas al Hub, si existen
-    llm_cache = load_llm_cache(CONFIG["LLM_CACHE_FILE"])
-
-HAS_LLM = len(llm_frame) > 0 and llm_frame["id"].isin(llm_cache).all()
-if HAS_LLM:
-    parsed = [parse_llm_response(llm_cache[pid]) for pid in llm_frame["id"]]
-    llm_preds = np.stack([multi_hot(tags) for tags, _, _ in parsed])
-    llm_ratings = np.array([rating for _, rating, _ in parsed])
-    fail_rate = np.mean([failed for _, _, failed in parsed])
-    print(f"Fallos de parseo: {100 * fail_rate:.1f}% de {len(parsed)} respuestas")
-    print("Ejemplo de respuesta:", llm_cache[llm_frame["id"].iloc[0]][:300])
-else:
-    print("No hay respuestas del LLM para todo el subconjunto: B3 no se incluye.")
-
-# %% [markdown]
-# ## 5.4. Tabla principal de resultados
-#
-# Primero sobre el **test completo** (todos los modelos salvo el LLM) y después sobre el
-# **subconjunto del LLM**, donde se comparan todos los modelos en igualdad de condiciones.
+# Todos los modelos sobre el **test completo**, con umbrales ajustados en validación.
 
 # %%
 ROW_ORDER = ["B0 Trivial", "TF-IDF + LR", "Linear probe", "ModernBERT ajustado"]
 
 
-def evaluate(name, idx=None, split="test", thresholds=None):
-    """Fila de la tabla de resultados para un modelo (opcionalmente en un subconjunto)."""
+def evaluate(name, split="test", thresholds=None):
+    """Métricas de un modelo en un split (por defecto, con sus umbrales ajustados)."""
     res = results[name]
-    idx = np.arange(len(Y[split])) if idx is None else idx
     thr = res["thresholds"] if thresholds is None else thresholds
-    row = tag_metrics(Y[split][idx], res[f"{split}_scores"][idx], thr)
-    row.update(rating_metrics(R[split][idx], res[f"{split}_rating"][idx], M[split][idx]))
+    row = tag_metrics(Y[split], res[f"{split}_scores"], thr)
+    row.update(rating_metrics(R[split], res[f"{split}_rating"], M[split]))
     return row
 
 
-def results_table(rows):
-    table = pd.DataFrame(rows).T
-    table.columns = ["F1 micro", "F1 macro", "F1 samples", "mAP macro", "Subset acc", "MAE",
-                     "RMSE", "Spearman", "% |err|≤200"]
-    return table.round(3)
-
-
-main_table = results_table({name: evaluate(name) for name in ROW_ORDER})
-display(Markdown(f"**Test completo ({len(Y['test'])} problemas), umbrales ajustados en val**"))
-display(main_table)
-
-llm_idx = np.flatnonzero(data["test"]["id"].isin(LLM_IDS))
-subset_rows = {name: evaluate(name, llm_idx) for name in ROW_ORDER}
-if HAS_LLM:
-    order_in_subset = data["test"]["id"].iloc[llm_idx].map(
-        dict(zip(llm_frame["id"], range(len(llm_frame))))).to_numpy()
-    row = tag_metrics(Y["test"][llm_idx], llm_preds[order_in_subset], 0.5)
-    row["map_macro"] = np.nan  # el LLM no da puntuaciones continuas
-    row.update(rating_metrics(R["test"][llm_idx], llm_ratings[order_in_subset],
-                              M["test"][llm_idx]))
-    subset_rows = {"B3 Qwen2.5 zero-shot": row, **subset_rows}
-subset_table = results_table(subset_rows)
-display(Markdown(f"**Subconjunto del LLM ({len(llm_idx)} problemas posteriores a "
-                 f"{CONFIG['TEST_START_DATE']})**"))
-display(subset_table)
+main_table = pd.DataFrame({name: evaluate(name) for name in ROW_ORDER}).T
+main_table.columns = ["F1 micro", "F1 macro", "F1 samples", "mAP macro", "Subset acc", "MAE",
+                      "RMSE", "Spearman", "% |err|≤200"]
+print(f"Test: {len(Y['test'])} problemas")
+main_table.round(3)
 
 # %% [markdown]
-# <!-- TODO: completar tras ejecución en Colab (discusión de la tabla principal) -->
+# <!-- TODO (autor): discusión de la tabla principal -->
 
 # %% [markdown]
-# ## 5.5. Efecto del ajuste de umbrales
+# ## 5.4. Efecto del ajuste de umbrales
 
 # %%
 threshold_rows = {}
@@ -1498,54 +1241,10 @@ for name in ROW_ORDER[1:]:
 pd.DataFrame(threshold_rows).T.round(3)
 
 # %% [markdown]
-# <!-- TODO: completar tras ejecución en Colab (cuánto aportan los umbrales y en qué etiquetas) -->
+# <!-- TODO (autor): cuánto aportan los umbrales -->
 
 # %% [markdown]
-# ## 5.6. Intervalos de confianza (*bootstrap*)
-#
-# Con unos pocos cientos o miles de problemas de test, las diferencias pequeñas pueden deberse al
-# azar. Remuestreamos test con reemplazo 1000 veces y calculamos el intervalo del 95 % de cada
-# métrica y de la **diferencia** entre el modelo ajustado y el mejor baseline (elegido por F1 macro
-# en **validación**, no en test). Si el intervalo de la diferencia no contiene el 0, la mejora es
-# estadísticamente significativa.
-
-# %%
-def bootstrap(name_a, name_b, n_boot=1000):
-    rng = np.random.default_rng(SEED)
-    a, b = results[name_a], results[name_b]
-    pred_a = (a["test_scores"] >= a["thresholds"]).astype(int)
-    pred_b = (b["test_scores"] >= b["thresholds"]).astype(int)
-    stats = collections.defaultdict(list)
-    n = len(Y["test"])
-    for _ in range(n_boot):
-        idx = rng.integers(0, n, n)
-        y, m = Y["test"][idx], M["test"][idx].astype(bool)
-        for tag, pred, res in [("A", pred_a, a), ("B", pred_b, b)]:
-            stats[f"f1_micro_{tag}"].append(f1_score(y, pred[idx], average="micro",
-                                                     zero_division=0))
-            stats[f"f1_macro_{tag}"].append(f1_score(y, pred[idx], average="macro",
-                                                     zero_division=0))
-            err = res["test_rating"][idx][m] - R["test"][idx][m]
-            stats[f"mae_{tag}"].append(np.abs(err).mean())
-    rows = {}
-    for metric in ["f1_micro", "f1_macro", "mae"]:
-        va, vb = np.array(stats[f"{metric}_A"]), np.array(stats[f"{metric}_B"])
-        for label, values in [(name_a, va), (name_b, vb), ("Diferencia", va - vb)]:
-            lo, hi = np.percentile(values, [2.5, 97.5])
-            rows[(metric, label)] = {"media": values.mean(), "IC 2.5%": lo, "IC 97.5%": hi}
-    return pd.DataFrame(rows).T.round(3)
-
-
-best_baseline = max(["TF-IDF + LR", "Linear probe"],
-                    key=lambda n: evaluate(n, split="val")["f1_macro"])
-print("Mejor baseline en validación:", best_baseline)
-bootstrap("ModernBERT ajustado", best_baseline)
-
-# %% [markdown]
-# <!-- TODO: completar tras ejecución en Colab (¿es significativa la mejora?) -->
-
-# %% [markdown]
-# ## 5.7. Análisis por etiqueta
+# ## 5.5. Análisis por etiqueta
 
 # %%
 per_tag = {}
@@ -1572,45 +1271,13 @@ ax.grid(axis="y", visible=False)
 ax.legend(frameon=False, loc="lower right")
 plt.tight_layout()
 plt.show()
-
-fig, ax = plt.subplots(figsize=(8, 5))
-ax.scatter(per_tag_ft["frecuencia train"], per_tag_ft["F1"], s=60, color=COLORS["train"],
-           edgecolor="white", linewidth=1.5)
-for tag, row in per_tag_ft.iterrows():
-    ax.annotate(tag, (row["frecuencia train"], row["F1"]), fontsize=8, xytext=(4, 2),
-                textcoords="offset points", color="#2b2b2a")
-ax.set_xscale("log")
-ax.set(title="F1 por etiqueta frente a su frecuencia en train (modelo ajustado)",
-       xlabel="Problemas de train con la etiqueta (escala log)", ylabel="F1 en test")
-plt.tight_layout()
-plt.show()
 per_tag_ft.sort_values("F1", ascending=False).round(3)
 
 # %% [markdown]
-# **Hipótesis:** las etiquetas con vocabulario propio (`strings`, `geometry`, `trees`, `graphs`,
-# `number theory`, `probabilities`, `games`) deberían ser más fáciles de predecir que las que
-# dependen de la idea de la solución (`greedy`, `constructive algorithms`, `implementation`,
-# `brute force`).
-
-# %%
-VOCAB_TAGS = ["strings", "geometry", "trees", "graphs", "number theory", "probabilities", "games"]
-IDEA_TAGS = ["greedy", "constructive algorithms", "implementation", "brute force"]
-hypothesis = pd.DataFrame({
-    group: {
-        "etiquetas presentes": ", ".join(t for t in tags if t in TAG2IDX),
-        "F1 medio": per_tag_ft.loc[[t for t in tags if t in TAG2IDX], "F1"].mean(),
-        "mAP medio": np.mean([
-            average_precision_score(Y["test"][:, TAG2IDX[t]], ft_test_probs[:, TAG2IDX[t]])
-            for t in tags if t in TAG2IDX and Y["test"][:, TAG2IDX[t]].sum() > 0]),
-    } for group, tags in [("vocabulario propio", VOCAB_TAGS), ("idea de solución", IDEA_TAGS)]
-}).T
-hypothesis
+# <!-- TODO (autor): ¿qué etiquetas se predicen bien y cuáles mal? ¿influye la frecuencia? -->
 
 # %% [markdown]
-# <!-- TODO: completar tras ejecución en Colab (¿se confirma la hipótesis?) -->
-
-# %% [markdown]
-# ## 5.8. Predicción del rating
+# ## 5.6. Predicción del rating
 
 # %%
 mask_test = M["test"].astype(bool)
@@ -1643,76 +1310,13 @@ bucket_df.assign(problemas=[int((mask_test & (R["test"] >= lo) & (R["test"] <= h
                             for lo, hi in buckets]).round(1)
 
 # %% [markdown]
-# <!-- TODO: completar tras ejecución en Colab (regresión a la media, rangos peor predichos) -->
+# <!-- TODO (autor): ¿en qué rangos de dificultad se equivoca más el modelo? -->
 
 # %% [markdown]
-# ## 5.9. Ablaciones
+# ## 5.7. Análisis de errores
 #
-# Para entender qué decisiones de diseño importan, se entrenan variantes del modelo cambiando una
-# sola cosa cada vez. Para ahorrar tiempo, todas se entrenan **3 épocas**, y se comparan con la
-# configuración principal **también entrenada 3 épocas** con la misma semilla:
-#
-# - **A1, ¿ayuda la multitarea?** `lambda_rating = 0` (solo etiquetas) frente a 0.5.
-# - **A2, ¿importan los números?** Texto con cada número sustituido por `NUM`.
-# - **A3, ¿importa el contexto largo?** `MAX_LEN = 512` frente a 1024.
-#
-# Se controla con `RUN_ABLATIONS` (desactivado por defecto: añade unas cuatro ejecuciones de
-# entrenamiento).
-
-# %%
-def eval_trainer_model(trained_model, val_ds, test_ds):
-    """Métricas de val y test (umbrales ajustados en val) de un modelo de ablación."""
-    val_probs, val_rating = predict(trained_model, val_ds)
-    test_probs, test_rating = predict(trained_model, test_ds)
-    thr = tune_thresholds(Y["val"], val_probs)
-    row = {"val F1 macro": tag_metrics(Y["val"], val_probs, thr)["f1_macro"]}
-    tm = tag_metrics(Y["test"], test_probs, thr)
-    rm = rating_metrics(R["test"], test_rating, M["test"])
-    row.update({"test F1 micro": tm["f1_micro"], "test F1 macro": tm["f1_macro"],
-                "test mAP macro": tm["map_macro"], "test MAE": rm["mae"],
-                "test Spearman": rm["spearman"]})
-    return row
-
-
-if CONFIG["RUN_ABLATIONS"]:
-    ablation_epochs = CONFIG["ABLATION_EPOCHS"]
-    variants = {
-        "Principal (λ=0.5, 1024)": dict(ds=hf, lambda_rating=CONFIG["LAMBDA_RATING"]),
-        "A1: solo etiquetas (λ=0)": dict(ds=hf, lambda_rating=0.0),
-        "A2: números → NUM": dict(
-            ds={s: to_hf_dataset(data[s], text_col="text_num") for s in SPLITS},
-            lambda_rating=CONFIG["LAMBDA_RATING"]),
-        "A3: MAX_LEN=512": dict(
-            ds={s: to_hf_dataset(data[s], max_len=min(512, MAX_LEN)) for s in SPLITS},
-            lambda_rating=CONFIG["LAMBDA_RATING"]),
-    }
-    ablation_rows = {}
-    for i, (name, v) in enumerate(variants.items()):
-        abl_trainer, secs = train_multitask(f"ablation_{i}", v["ds"]["train"], v["ds"]["val"],
-                                            lambda_rating=v["lambda_rating"],
-                                            epochs=ablation_epochs, push=False)
-        row = eval_trainer_model(abl_trainer.model, v["ds"]["val"], v["ds"]["test"])
-        row["minutos"] = secs / 60
-        ablation_rows[name] = row
-        print(f"{name}: {row}")
-        del abl_trainer
-        gc.collect()
-        torch.cuda.empty_cache()
-    ablation_table = pd.DataFrame(ablation_rows).T.round(3)
-    if "A1: solo etiquetas (λ=0)" in ablation_table.index:
-        # Con λ=0 la cabeza de rating no se entrena: su MAE no es interpretable
-        ablation_table.loc["A1: solo etiquetas (λ=0)", ["test MAE", "test Spearman"]] = np.nan
-    display(ablation_table)
-else:
-    print("Ablaciones desactivadas (RUN_ABLATIONS=False).")
-
-# %% [markdown]
-# <!-- TODO: completar tras ejecución en Colab (interpretación de las ablaciones) -->
-
-# %% [markdown]
-# ## 5.10. Análisis de errores
-#
-# Tabla con aciertos y fallos del modelo ajustado en test, ordenados por el F1 de cada problema.
+# Ejemplos de aciertos y fallos del modelo ajustado en test, ordenados por el F1 de cada problema
+# (el F1 entre sus etiquetas reales y las predichas).
 
 # %%
 pred_test = (ft_test_probs >= ft_thresholds).astype(int)
@@ -1736,34 +1340,18 @@ def show_examples(indices):
     return pd.DataFrame(rows)
 
 
+ranked = np.argsort(-sample_f1, kind="stable")
 with pd.option_context("display.max_colwidth", 400):
-    ranked = np.argsort(-sample_f1, kind="stable")
-    display(Markdown("**Aciertos (mayor F1 por problema)**"))
-    display(show_examples(ranked[:4]))
-    display(Markdown("**Fallos (menor F1 por problema)**"))
-    display(show_examples(ranked[-4:]))
+    print("Aciertos (mayor F1 por problema)")
+    display(show_examples(ranked[:3]))
+    print("Fallos (menor F1 por problema)")
+    display(show_examples(ranked[-3:]))
 
 # %% [markdown]
-# **Falsos negativos más comunes.** Para las etiquetas que el modelo omite con más frecuencia,
-# ¿qué etiquetas predijo en su lugar?
-
-# %%
-false_neg = (Y["test"] == 1) & (pred_test == 0)
-fn_rows = []
-for k in np.argsort(-false_neg.sum(axis=0))[:5]:
-    rows_k = np.flatnonzero(false_neg[:, k])
-    predicted_instead = collections.Counter(
-        TAGS[j] for i in rows_k for j in np.flatnonzero(pred_test[i]) if Y["test"][i, j] == 0)
-    fn_rows.append({"etiqueta omitida": TAGS[k], "falsos negativos": len(rows_k),
-                    "predichas en su lugar (top 3)": ", ".join(
-                        f"{t} ({c})" for t, c in predicted_instead.most_common(3))})
-pd.DataFrame(fn_rows)
+# <!-- TODO (autor): patrones en los errores -->
 
 # %% [markdown]
-# <!-- TODO: completar tras ejecución en Colab (patrones de error) -->
-
-# %% [markdown]
-# ## 5.11. Limitaciones
+# ## 5.8. Limitaciones
 #
 # - **Ruido en las etiquetas.** Las etiquetas las asignan los autores y la comunidad, y un problema
 #   puede admitir varias soluciones válidas con técnicas distintas: parte del "error" no es tal.
@@ -1772,18 +1360,14 @@ pd.DataFrame(fn_rows)
 # - **Dificultad intrínseca del rating.** El rating depende de cómo se comportaron los
 #   participantes en el concurso, algo que el enunciado no refleja del todo.
 # - **Truncamiento.** Los textos más largos que `MAX_LEN` pierden su parte final.
-# - **Contaminación del LLM.** Se ha evaluado el LLM solo con problemas posteriores a su
-#   lanzamiento, pero no se puede descartar que haya visto problemas muy similares.
 # - **Solo inglés** y solo problemas de Codeforces.
-#
-# <!-- TODO: completar tras ejecución en Colab (limitaciones observadas en los resultados) -->
 
 # %% [markdown]
 # # 6. Conclusiones
 #
 # ## 6.1. Resumen de resultados
 #
-# <!-- TODO: completar tras ejecución en Colab -->
+# <!-- TODO (autor): resumen de resultados -->
 #
 # ## 6.2. Diferencias con los notebooks de clase
 #
@@ -1797,7 +1381,7 @@ pd.DataFrame(fn_rows)
 # | **Longitud de contexto** | `padding="max_length"` (512) | 1024 | 1024, con padding dinámico y agrupación por longitud |
 # | **Datos y división** | 1000 ejemplos aleatorios de train y de test | 1000 ejemplos, sin validación | ~10 000 problemas, división temporal train/val/test |
 # | **Umbrales** | No aplica (argmax) | No aplica | Un umbral por etiqueta ajustado en validación |
-# | **Evaluación** | *Accuracy* | Comparación cualitativa de respuestas | F1 micro/macro, mAP, MAE, Spearman, IC bootstrap, 4 baselines y ablaciones |
+# | **Evaluación** | *Accuracy* | Comparación cualitativa de respuestas | F1 micro/macro, mAP, MAE, Spearman y 3 baselines |
 #
 # ## 6.3. Aportaciones
 #
@@ -1807,18 +1391,14 @@ pd.DataFrame(fn_rows)
 #   cabezas y una pérdida combinada, compatibles con `Trainer`, `push_to_hub` y `from_pretrained`.
 # - **Contexto largo** (1024 tokens) con un *encoder* moderno, padding dinámico y agrupación por
 #   longitud.
-# - **Rigor en la evaluación**: división temporal sin fugas entre concursos, deduplicación,
-#   umbrales y selección de modelo solo con validación, intervalos de confianza bootstrap y
-#   análisis por etiqueta.
-# - **Baselines que aíslan el efecto del ajuste fino**: TF-IDF, *linear probe* sobre ModernBERT
-#   congelado (el modelo base sin ajustar) y un LLM de 7B sin contaminación temporal.
-# - **Dominio técnico** donde los números del enunciado son parte de la señal (ablación A2).
+# - **Evaluación cuidadosa**: división temporal sin mezclar concursos, deduplicación, umbrales
+#   elegidos solo con validación y comparación con el modelo base sin ajustar (*linear probe*).
 #
 # ## 6.4. Trabajo futuro
 #
-# - Probar `ModernBERT-large` (395M de parámetros) o un ajuste más largo.
+# - Probar `ModernBERT-large` (395M de parámetros).
 # - Añadir como entrada el código de soluciones aceptadas (`open-r1/codeforces-submissions`).
-# - Ordenar las etiquetas por relevancia, o predecir la técnica principal de cada problema.
+# - Comparar con un LLM generalista sin ajustar (*zero-shot*).
 #
 # # 7. Referencias
 #
@@ -1826,10 +1406,7 @@ pd.DataFrame(fn_rows)
 #   Bidirectional Encoder for Fast, Memory Efficient, and Long Context Finetuning and Inference*.
 #   arXiv:2412.13663.
 # - Model card de [`answerdotai/ModernBERT-base`](https://huggingface.co/answerdotai/ModernBERT-base).
-# - Dataset card de [`open-r1/codeforces`](https://huggingface.co/datasets/open-r1/codeforces) y
-#   repositorio [`huggingface/open-r1`](https://github.com/huggingface/open-r1).
-# - Qwen Team (2024). *Qwen2.5 Technical Report*. arXiv:2412.15115.
-#   [Anuncio de Qwen2.5](https://qwenlm.github.io/blog/qwen2.5/) (19/09/2024).
+# - Dataset card de [`open-r1/codeforces`](https://huggingface.co/datasets/open-r1/codeforces).
 # - Documentación de Hugging Face
 #   [`transformers` (Trainer)](https://huggingface.co/docs/transformers/main_classes/trainer)
 #   y de [scikit-learn](https://scikit-learn.org/stable/).
