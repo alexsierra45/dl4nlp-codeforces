@@ -1,12 +1,11 @@
-# Entorno local y artefactos
+# Local environment and artifacts
 .venv/
 scratch/
 runs/
 __pycache__/
 .ipynb_checkpoints/
-*.jsonl
 training_log.json
 
-# Notebooks de clase (material del profesor, no forman parte del proyecto)
+# Course notebooks (instructor's material, not part of this project)
 6.GenAI&LMs_Fine_Tuning_BERT.ipynb
 7_GenAI&LMs_QLORA.ipynb

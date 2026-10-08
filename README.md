@@ -1,26 +1,41 @@
-# DL4NLP: etiquetas algorítmicas y dificultad de problemas de Codeforces
+# DL4NLP: Codeforces algorithmic tags and difficulty prediction
 
-Ajuste fino multitarea de [ModernBERT-base](https://huggingface.co/answerdotai/ModernBERT-base)
-para predecir, a partir del enunciado de un problema de Codeforces, sus **etiquetas
-algorítmicas** (clasificación multi-etiqueta) y su **rating de dificultad** (regresión).
+Multitask fine-tuning of [ModernBERT-base](https://huggingface.co/answerdotai/ModernBERT-base) to
+predict, from the statement of a Codeforces problem, its **algorithmic tags** (multi-label
+classification) and its **difficulty rating** (regression).
 
-Proyecto individual de la asignatura *Deep Learning for NLP* (MUIA). Autor: Alex Sierra Alcalá.
+Individual project for the *Deep Learning for NLP* course (Master's in Artificial Intelligence).
+Author: Alex Sierra Alcalá.
 
-## Ficheros
+## Approach
 
-| Fichero | Contenido |
+- **Data:** [`open-r1/codeforces`](https://huggingface.co/datasets/open-r1/codeforces). Only the
+  statement fields are read (column projection over the parquet files); editorials, tests and
+  checkers are never downloaded.
+- **Preprocessing:** LaTeX cleanup that keeps numbers, deduplication, and a temporal 80/10/10
+  split by contest date.
+- **Model:** ModernBERT-base encoder with mean pooling and two heads, trained with a weighted
+  binary cross-entropy plus a masked MSE on the normalized rating.
+- **Evaluation:** per-tag decision thresholds tuned on validation; comparison against a trivial
+  baseline, TF-IDF + linear models, and a linear probe on the frozen encoder.
+
+The notebook itself is written in Spanish, as required by the course.
+
+## Files
+
+| File | Contents |
 |---|---|
-| `Sierra_Alcala_Alex.ipynb` | Notebook entregable (autocontenido, pensado para Colab con GPU T4) |
-| `notebook.py` | Fuente del notebook en formato jupytext *percent* |
-| `requirements-local.txt` | Versiones usadas en la prueba local |
+| `Sierra_Alcala_Alex.ipynb` | Deliverable notebook (self-contained, meant for Colab with a T4 GPU) |
+| `notebook.py` | Notebook source in jupytext *percent* format |
+| `requirements-local.txt` | Library versions used for the local smoke test |
 
-## Uso
+## Usage
 
-Abrir `Sierra_Alcala_Alex.ipynb` en Google Colab, seleccionar una GPU T4 y ejecutar todo. Los datos
-([`open-r1/codeforces`](https://huggingface.co/datasets/open-r1/codeforces)) y los modelos se
-descargan del Hugging Face Hub.
+Open `Sierra_Alcala_Alex.ipynb` in Google Colab, select a T4 GPU and run all cells. Data and
+models are downloaded from the Hugging Face Hub. Optionally, add a Hugging Face token as the Colab
+secret `HF_TOKEN` to push the fine-tuned model to the Hub.
 
-Para regenerar el notebook desde la fuente y hacer la prueba rápida en local:
+To regenerate the notebook from its source and run the quick local check:
 
 ```bash
 jupytext --to ipynb notebook.py -o Sierra_Alcala_Alex.ipynb
