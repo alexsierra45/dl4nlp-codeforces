@@ -17,9 +17,6 @@
 # # Predicción de etiquetas algorítmicas y dificultad de problemas de Codeforces
 # ## Ajuste fino multitarea de ModernBERT
 #
-# [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](
-# https://colab.research.google.com/github/alexsierra45/dl4nlp-codeforces/blob/main/Sierra_Alcala_Alex.ipynb)
-#
 # **Instrucciones de ejecución**
 #
 # 1. Abrir el notebook en Google Colab y seleccionar *Entorno de ejecución → Cambiar tipo de
