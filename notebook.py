@@ -210,8 +210,7 @@ CONFIG = {
     "LAMBDA_RATING": 0.5,
     "POS_WEIGHT_CLIP": 10.0,
     # Entrenamiento
-    "LR": 5e-5,               # learning rate de las cabezas y de la capa más alta
-    "LLRD_DECAY": 0.9,        # factor por capa del learning rate por capas (1.0 = desactivado)
+    "LR": 5e-5,
     "EPOCHS": 5,
     "BATCH_SIZE": 8,
     "GRAD_ACCUM": 2,
@@ -880,8 +879,7 @@ def compute_metrics(eval_pred):
 # | Parámetro | Valor | Justificación |
 # |---|---|---|
 # | `max_length` | 1024 | Cubre la mayoría de enunciados (sección 3.6); el resto se trunca por el final |
-# | `learning_rate` | 5e-5 | El de las cabezas; las capas del *encoder* usan LLRD (sección 4.5) |
-# | `llrd_decay` | 0.9 | Cada capa hacia abajo aprende 0,9 veces más despacio que la de encima |
+# | `learning_rate` | 5e-5 | Valor habitual para el ajuste fino completo de *encoders* de este tamaño |
 # | `per_device_train_batch_size` | 8 | Cabe en la T4 con 1024 tokens en fp16 |
 # | `gradient_accumulation_steps` | 2 | Lote efectivo de 16 |
 # | `num_train_epochs` | 5 | Con *early stopping* (paciencia 2) |
@@ -924,58 +922,11 @@ training_args = TrainingArguments(
 )
 
 # %% [markdown]
-# ## 4.5. *Learning rate* por capas (LLRD)
-#
-# En un ajuste fino completo estándar, todas las capas aprenden con el mismo *learning rate*. Pero
-# no todas guardan el mismo tipo de conocimiento: las capas bajas de un *transformer* codifican
-# información general del lenguaje (vocabulario, sintaxis), útil para cualquier tarea, mientras que
-# las altas son más específicas. Con **LLRD** (*layer-wise learning rate decay*), cada capa aprende
-# más despacio que la de encima:
-#
-# $$
-# \eta_{\text{capa } l} = \eta \cdot \gamma^{\,L + 1 - l}
-# $$
-#
-# donde $\eta$ = 5e-5 es el *learning rate* de las cabezas, $L$ = 22 es el número de capas,
-# $l$ va de 0 (embeddings) a $L + 1$ (cabezas) y $\gamma$ = `LLRD_DECAY` = 0,9. Así, las cabezas
-# aprenden a 5e-5 y los embeddings a unos 4e-6.
-#
-# El objetivo es reducir el **sobreajuste**: en una primera ejecución sin LLRD, la pérdida de
-# validación empezaba a subir a partir de la tercera época. También reduce el riesgo de "romper" las
-# representaciones preentrenadas al principio, cuando las cabezas todavía son aleatorias.
-#
-# Como en el `Trainer` por defecto, los sesgos y las normas no llevan *weight decay*. El *warmup*
-# y el decaimiento lineal se siguen aplicando, ahora sobre cada grupo de capas.
-
-# %%
-def build_llrd_optimizer(model, base_lr, decay, weight_decay):
-    """AdamW con un learning rate por capa: base_lr arriba, multiplicado por `decay` al bajar."""
-    n_layers = model.encoder.config.num_hidden_layers
-    groups = {}
-    for name, param in model.named_parameters():
-        if name.startswith("encoder.embeddings"):
-            depth = 0                                       # la capa más baja
-        elif name.startswith("encoder.layers."):
-            depth = int(name.split(".")[2]) + 1             # capas 1..L
-        elif name.startswith("encoder."):
-            depth = n_layers                                # norma final del encoder
-        else:
-            depth = n_layers + 1                            # cabezas
-        lr = base_lr * decay ** (n_layers + 1 - depth)
-        wd = 0.0 if param.ndim == 1 else weight_decay       # sin decay en sesgos y normas
-        groups.setdefault((lr, wd), []).append(param)
-    return torch.optim.AdamW([{"params": params, "lr": lr, "weight_decay": wd}
-                              for (lr, wd), params in groups.items()])
-
-# %% [markdown]
-# ## 4.6. Ajuste fino
+# ## 4.5. Ajuste fino
 #
 # Con `RUN_TRAINING = True` se crea el modelo a partir de ModernBERT-base y se entrena; con
 # `False` se descarga el ya ajustado desde el Hub junto con el historial del entrenamiento. Al
 # terminar, el `Trainer` recarga los pesos de la **mejor época** según el F1 macro de validación.
-#
-# Al `Trainer` le pasamos nuestro optimizador con LLRD; el *scheduler* (`None`) lo sigue creando él
-# a partir de `TrainingArguments` (*warmup* del 10 % y decaimiento lineal).
 
 # %%
 if CONFIG["RUN_TRAINING"]:
@@ -983,13 +934,10 @@ if CONFIG["RUN_TRAINING"]:
         CONFIG["BASE_MODEL"], tag_names=TAGS, lambda_rating=CONFIG["LAMBDA_RATING"],
         pos_weight=POS_WEIGHT, rating_mean=RATING_MEAN, rating_std=RATING_STD,
         dropout=CONFIG["DROPOUT"])
-    optimizer = build_llrd_optimizer(model, CONFIG["LR"], CONFIG["LLRD_DECAY"],
-                                     CONFIG["WEIGHT_DECAY"])
     trainer = Trainer(
         model=model, args=training_args, train_dataset=hf["train"], eval_dataset=hf["val"],
         data_collator=collator, processing_class=tokenizer, compute_metrics=compute_metrics,
         callbacks=[EarlyStoppingCallback(CONFIG["EARLY_STOPPING_PATIENCE"])],
-        optimizers=(optimizer, None),
     )
     t0 = time.time()
     trainer.train()
