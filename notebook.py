@@ -1170,6 +1170,11 @@ if demo_model is not model:
 #   los *embeddings* de ModernBERT-base **congelado** (mismo *mean pooling* y `MAX_LEN`) y se
 #   entrenan encima los mismos modelos lineales. Mide cuánto aporta ajustar el *encoder* frente a
 #   usar solo sus representaciones preentrenadas.
+# - **B3, ModernBERT *zero-shot* (MLM).** ModernBERT **sin ningún entrenamiento**: se le pregunta
+#   directamente por la técnica con su cabeza de *masked language modeling* (sección 5.2.1).
+#
+# Con B3, B2 y el modelo ajustado se forma una escalera: nada entrenado, solo una capa lineal
+# entrenada y todo el modelo ajustado.
 
 # %%
 results = {}  # nombre -> puntuaciones, ratings y umbrales de val y test
@@ -1252,12 +1257,94 @@ X_emb = {s: scaler.transform(x) for s, x in X_emb.items()}
 fit_linear_baselines(X_emb["train"], X_emb["val"], X_emb["test"], "Linear probe")
 
 # %% [markdown]
-# ## 5.3. Tabla principal de resultados
+# ### 5.2.1. ModernBERT *zero-shot* con su cabeza MLM (B3)
 #
-# Todos los modelos sobre el **test completo**, con umbrales ajustados en validación.
+# ModernBERT se preentrenó rellenando palabras ocultas (`[MASK]`), igual que en la primera parte
+# del notebook 6. Aprovechamos esa capacidad **sin entrenar nada**: al final de cada enunciado
+# añadimos la lista de técnicas posibles y una frase con un hueco:
+#
+# ```
+# {enunciado}
+# Possible techniques: implementation, math, greedy, dp, ...
+# The technique needed to solve this problem is [MASK].
+# ```
+#
+# - **Respuesta restringida a las 20 etiquetas.** No dejamos que el modelo elija entre las ~50 000
+#   palabras de su vocabulario: solo miramos la probabilidad que da en el hueco a unas pocas
+#   palabras por etiqueta (los *verbalizadores*, p. ej. `dp` → "dp" o "dynamic"). La puntuación
+#   de cada etiqueta es la de su palabra más probable.
+# - **Renormalización.** Esas probabilidades son muy pequeñas (el modelo reparte la probabilidad
+#   entre todo su vocabulario), así que las renormalizamos para que las 20 etiquetas sumen 1.
+# - El enunciado se recorta para que el texto añadido quepa en `MAX_LEN` tokens.
+# - Los umbrales se ajustan en validación, como en el resto de modelos; el modelo no aprende
+#   ningún parámetro. Como no puede predecir un rating, para el rating usa la media de train
+#   (igual que B0). Para este modelo, la métrica más justa es el **mAP**, que no depende del
+#   umbral.
 
 # %%
-ROW_ORDER = ["B0 Trivial", "TF-IDF + LR", "Linear probe", "ModernBERT ajustado"]
+from transformers import AutoModelForMaskedLM  # noqa: E402
+
+VERBALIZERS = {
+    "implementation": ["implementation", "simulation"], "math": ["math", "mathematics"],
+    "greedy": ["greedy"], "dp": ["dp", "dynamic"],
+    "data structures": ["data", "structures", "segment"],
+    "constructive algorithms": ["construction", "constructive"],
+    "brute force": ["brute", "enumeration"], "graphs": ["graphs", "graph"],
+    "sortings": ["sorting", "sort"], "binary search": ["binary"], "dfs and similar": ["search"],
+    "trees": ["trees", "tree"], "strings": ["strings", "string"],
+    "number theory": ["number", "primes"], "combinatorics": ["counting"], "bitmasks": ["bits"],
+    "two pointers": ["pointers"], "geometry": ["geometry"], "dsu": ["union"],
+    "shortest paths": ["shortest", "paths"],
+}
+# Identificador del token de cada palabra (con espacio delante, como aparece tras "is")
+verbalizer_ids = [[tokenizer(" " + w, add_special_tokens=False)["input_ids"][0]
+                   for w in VERBALIZERS[t]] for t in TAGS]
+mlm_suffix = (f"\nPossible techniques: {', '.join(TAGS)}.\n"
+              f"The technique needed to solve this problem is {tokenizer.mask_token}.")
+
+
+@torch.no_grad()
+def mlm_zero_shot(mlm, texts, batch_size=16):
+    """Probabilidad de cada etiqueta en el [MASK], renormalizada entre las 20 etiquetas."""
+    suffix_ids = tokenizer(mlm_suffix, add_special_tokens=False)["input_ids"]
+    body = tokenizer(list(texts), add_special_tokens=False)["input_ids"]
+    keep = MAX_LEN - len(suffix_ids) - 2           # espacio para [CLS] y [SEP]
+    seqs = [[tokenizer.cls_token_id] + b[:keep] + suffix_ids + [tokenizer.sep_token_id]
+            for b in body]
+    order = np.argsort([len(s) for s in seqs])
+    scores = np.zeros((len(seqs), len(TAGS)), dtype=np.float32)
+    for start in range(0, len(seqs), batch_size):
+        idx = order[start:start + batch_size]
+        batch = tokenizer.pad({"input_ids": [seqs[i] for i in idx]},
+                              return_tensors="pt").to(DEVICE)
+        hidden = mlm.model(**batch).last_hidden_state
+        pos = (batch["input_ids"] == tokenizer.mask_token_id).nonzero()
+        # La cabeza MLM solo en la posición del [MASK]: probabilidad de cada palabra
+        logp = torch.log_softmax(mlm.decoder(mlm.head(hidden[pos[:, 0], pos[:, 1]])).float(),
+                                 dim=-1)
+        tag_logp = torch.stack([logp[:, ids].max(dim=1).values for ids in verbalizer_ids], 1)
+        scores[idx] = torch.softmax(tag_logp, dim=1).cpu().numpy()  # renormalización
+    return scores
+
+
+mlm = AutoModelForMaskedLM.from_pretrained(
+    CONFIG["BASE_MODEL"], attn_implementation="sdpa",
+    dtype=torch.float16 if DEVICE.type == "cuda" else torch.float32).to(DEVICE).eval()
+register("B3 MLM zero-shot",
+         mlm_zero_shot(mlm, data["val"]["text"]), mlm_zero_shot(mlm, data["test"]["text"]),
+         np.full(len(Y["val"]), RATING_MEAN), np.full(len(Y["test"]), RATING_MEAN))
+del mlm
+torch.cuda.empty_cache()
+
+# %% [markdown]
+# ## 5.3. Tabla principal de resultados
+#
+# Todos los modelos sobre el **test completo**, con umbrales ajustados en validación. B0 y B3
+# predicen siempre la media de train como rating, por eso sus columnas de rating coinciden.
+
+# %%
+ROW_ORDER = ["B0 Trivial", "B3 MLM zero-shot", "TF-IDF + LR", "Linear probe",
+             "ModernBERT ajustado"]
 
 
 def evaluate(name, split="test", thresholds=None):
@@ -1433,7 +1520,7 @@ with pd.option_context("display.max_colwidth", 400):
 # | **Longitud de contexto** | `padding="max_length"` (512) | 1024 | 1024, con padding dinámico y agrupación por longitud |
 # | **Datos y división** | 1000 ejemplos aleatorios de train y de test | 1000 ejemplos, sin validación | ~10 000 problemas, división temporal train/val/test |
 # | **Umbrales** | No aplica (argmax) | No aplica | Un umbral por etiqueta ajustado en validación |
-# | **Evaluación** | *Accuracy* | Comparación cualitativa de respuestas | F1 micro/macro, mAP, MAE, Spearman y 3 baselines |
+# | **Evaluación** | *Accuracy* | Comparación cualitativa de respuestas | F1 micro/macro, mAP, MAE, Spearman y 4 baselines |
 #
 # ## 6.3. Aportaciones
 #
@@ -1444,7 +1531,8 @@ with pd.option_context("display.max_colwidth", 400):
 # - **Contexto largo** (1024 tokens) con un *encoder* moderno, padding dinámico y agrupación por
 #   longitud.
 # - **Evaluación cuidadosa**: división temporal sin mezclar concursos, deduplicación, umbrales
-#   elegidos solo con validación y comparación con el modelo base sin ajustar (*linear probe*).
+#   elegidos solo con validación y comparación con ModernBERT sin entrenar (*zero-shot*) y con
+#   una sola capa lineal entrenada (*linear probe*).
 #
 # ## 6.4. Trabajo futuro
 #
