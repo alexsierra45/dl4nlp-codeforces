@@ -1,16 +1,19 @@
 # ---
 # jupyter:
-#   jupytext:
-#     text_representation:
-#       extension: .py
-#       format_name: percent
-#   kernelspec:
-#     display_name: Python 3
-#     language: python
-#     name: python3
 #   accelerator: GPU
 #   colab:
 #     gpuType: T4
+#   jupytext:
+#     notebook_metadata_filter: accelerator,colab
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.19.6
+#   kernelspec:
+#     display_name: .venv (3.10.12)
+#     language: python
+#     name: python3
 # ---
 
 # %% [markdown]
@@ -78,31 +81,29 @@
 # - Está preentrenado con **2 billones de tokens de texto en inglés y código**, un dominio cercano
 #   al de los enunciados de programación competitiva.
 # - Tiene un **contexto nativo de 8192 tokens**, frente a los 512 de BERT. Muchos enunciados de
-#   Codeforces superan los 512 tokens (se cuantifica en la sección 3).
+#   Codeforces superan los 512 tokens.
 # - Tiene 22 capas y **149 millones de parámetros**.
 #
 # Un *encoder* encaja mejor que un LLM generativo en esta tarea: la salida es un vector de
 # probabilidades y un número, no texto.
 #
-# ## 2.3. Por qué ajuste fino completo (y no LoRA)
-#
 # Con unos 150M de parámetros, el modelo, sus gradientes y los estados del optimizador caben en los
-# 16 GB de una T4 en precisión mixta. Técnicas como LoRA o QLoRA (notebook 7 de clase) están
+# 16 GB de una T4. Técnicas como LoRA o QLoRA están
 # pensadas para modelos de miles de millones de parámetros que no caben en memoria; aquí no son
 # necesarias, y el ajuste fino completo permite adaptar todas las capas a un dominio muy técnico.
 #
-# ## 2.4. Por qué multitarea
+# ## 2.3. Por qué multitarea
 #
 # Etiquetas y dificultad están relacionadas: algunas técnicas aparecen sobre todo en problemas
-# difíciles y otras en problemas fáciles (se comprueba en la sección 3). Compartir el *encoder*
+# difíciles y otras en problemas fáciles. Compartir el *encoder*
 # entre las dos tareas permite aprovechar esa relación, y se obtiene un único modelo que resuelve
 # ambas con una sola pasada.
 
 # %% [markdown]
-# ## 2.5. Preparación del entorno
+# ## 2.4. Preparación del entorno
 #
 # Instalamos las librerías necesarias. Se fijan las versiones del ecosistema Hugging Face con las
-# que se ha probado el notebook, porque su API cambia entre versiones.
+# que se ha probado el notebook.
 #
 # - `transformers`: modelos, tokenizadores y la clase `Trainer`.
 # - `datasets`: contenedor `Dataset` usado por el `Trainer`.
@@ -163,7 +164,6 @@ from transformers import (
 )
 from transformers.utils import ModelOutput
 
-# Salidas limpias: sin avisos repetitivos ni barras de progreso de cada `map`
 warnings.filterwarnings("ignore")
 transformers.logging.set_verbosity_error()
 datasets.disable_progress_bars()
@@ -177,20 +177,16 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if torch.cuda.is_available():
     print(f"GPU detectada: {torch.cuda.get_device_name(0)}")
 else:
-    print("No se ha detectado GPU. En Colab: Entorno de ejecución > Cambiar tipo > GPU T4.")
+    print("No se ha detectado GPU")
 
 # %% [markdown]
-# ## 2.6. Configuración
+# ## 2.5. Configuración
 #
-# Todos los hiperparámetros y *flags* están en esta celda. `SMOKE_TEST` reduce el problema a unas
-# decenas de ejemplos y unos pocos pasos de entrenamiento; se usó solo para comprobar en local que
-# el notebook se ejecuta de principio a fin (se activa con la variable de entorno
-# `CF_SMOKE_TEST=1`). En Colab queda desactivado.
+# Todos los hiperparámetros y *flags* están en esta celda.
 
 # %%
 CONFIG = {
     # Flags de ejecución
-    "SMOKE_TEST": os.environ.get("CF_SMOKE_TEST") == "1",
     "RUN_TRAINING": True,
     "PUSH_TO_HUB": True,
     # Hub
@@ -217,11 +213,7 @@ CONFIG = {
     "SEED": 42,
 }
 
-# Prueba rápida: pocos ejemplos, secuencias cortas y pocos pasos
-SMOKE_SIZES = {"train": 64, "val": 32, "test": 32}
-if CONFIG["SMOKE_TEST"]:
-    CONFIG.update(MAX_LEN=128, PUSH_TO_HUB=False, RUN_TRAINING=True)
-MAX_STEPS = 5 if CONFIG["SMOKE_TEST"] else -1
+MAX_STEPS = -1
 
 SEED = CONFIG["SEED"]
 set_seed(SEED)
@@ -229,15 +221,11 @@ print(json.dumps(CONFIG, indent=1))
 
 # %% [markdown]
 # ## 2.7. Autenticación en Hugging Face Hub
-#
-# El token se lee del secreto `HF_TOKEN` de Colab (o de la variable de entorno del mismo nombre) y
-# nunca se escribe en el código. Si no hay token, `PUSH_TO_HUB` pasa a `False` y el notebook
-# continúa: los datos y el modelo de partida son públicos.
 
 # %%
 HF_TOKEN = os.environ.get("HF_TOKEN")
 try:
-    from google.colab import userdata  # solo existe en Colab
+    from google.colab import userdata
     HF_TOKEN = userdata.get("HF_TOKEN")
 except Exception:
     pass
@@ -258,8 +246,7 @@ PUSH_TO_HUB = CONFIG["PUSH_TO_HUB"]
 # Se usa [`open-r1/codeforces`](https://huggingface.co/datasets/open-r1/codeforces), publicado por
 # Hugging Face dentro del proyecto Open-R1. Contiene algo más de 10 000 problemas únicos de
 # Codeforces, desde 2010 hasta principios de 2025, con el enunciado dividido en campos, sus
-# etiquetas y su rating. La *dataset card* declara la licencia **CC-BY-4.0** en los metadatos y
-# **ODC-By 4.0** en el texto; ambas permiten el uso con atribución.
+# etiquetas y su rating.
 #
 # **Campos usados y descartados.**
 #
@@ -299,8 +286,8 @@ raw.head(3)
 # %% [markdown]
 # ## 3.2. Construcción del texto de entrada
 #
-# Unimos todos los *splits* originales (volveremos a dividir por fecha en la sección 3.4) y
-# construimos un único texto por problema, en este **orden deliberado**:
+# Unimos todos los *splits* originales y
+# construimos un único texto por problema, en este orden:
 #
 # ```
 # Title: ...
@@ -358,7 +345,7 @@ def build_text(row):
     lines = []
     for name, value in parts:
         value = clean_latex(value)
-        if value:  # los campos vacíos (p. ej. Interaction) se omiten
+        if value:
             lines.append(f"{name}: {value}")
     return "\n".join(lines)
 
@@ -373,7 +360,7 @@ print("\nTEXTO COMPLETO (primeros 700 caracteres):\n", example["text"][:700])
 # %% [markdown]
 # ## 3.3. Limpieza y deduplicación
 #
-# - Se eliminan los problemas **sin enunciado** (`description` vacía).
+# - Se eliminan los problemas **sin enunciado**.
 # - **Duplicados por alias:** los problemas compartidos entre la Div. 1 y la Div. 2 se registran en
 #   `aliases`. Se agrupan con una clave común (el menor identificador del grupo) y se conserva la
 #   aparición más antigua.
@@ -381,7 +368,7 @@ print("\nTEXTO COMPLETO (primeros 700 caracteres):\n", example["text"][:700])
 #   espacios) y también se conserva solo la aparición más antigua.
 #
 # Si un mismo enunciado apareciera en train y en test, el modelo podría memorizarlo y la
-# evaluación sería demasiado optimista; la deduplicación evita esa fuga.
+# evaluación sería demasiado optimista.
 
 # %%
 df = raw[raw["description"].fillna("").str.strip() != ""].copy()
@@ -420,7 +407,7 @@ print(f"Problemas restantes:                {len(df)}")
 # %% [markdown]
 # ## 3.4. División temporal
 #
-# La división es **por fecha del concurso, nunca aleatoria**: el 80 % más antiguo para train, el
+# La división es por fecha del concurso, nunca aleatoria: el 80 % más antiguo para train, el
 # 10 % siguiente para validación y el 10 % más reciente para test. Así se entrena con problemas
 # antiguos y se evalúa con problemas nuevos, igual que ocurriría al usar el modelo en un concurso
 # futuro. Una división aleatoria mezclaría problemas del mismo concurso, que comparten autores y
@@ -433,7 +420,6 @@ test_cut = dates.iloc[int(0.9 * len(df))]
 df["split"] = np.where(df["date"] < val_cut, "train",
                        np.where(df["date"] < test_cut, "val", "test"))
 
-# Comprobación: ningún concurso queda repartido entre dos splits
 assert (df.groupby("contest_id")["split"].nunique() == 1).all()
 print("Corte val :", val_cut)
 print("Corte test:", test_cut)
@@ -441,14 +427,14 @@ print("Corte test:", test_cut)
 # %% [markdown]
 # ## 3.5. Vocabulario de etiquetas y normalización del rating
 #
-# Todo lo que se "aprende" de los datos se calcula **solo con train**:
+# Todo lo que se aprende de los datos se calcula solo con train:
 #
 # - **Vocabulario:** etiquetas con al menos `MIN_TAG_COUNT` apariciones en train, hasta un máximo
 #   de `TOP_K_TAGS`. Las etiquetas muy raras (`2-sat`, `schedules`...) tienen demasiado pocos
 #   ejemplos para aprenderlas. Se descartan los problemas que se quedan sin ninguna etiqueta del
 #   vocabulario.
 # - **Rating:** se normaliza con *z-score* usando la media y la desviación típica de train. Los
-#   problemas sin rating se conservan (sirven para las etiquetas) con `rating_mask = 0`, de modo
+#   problemas sin rating se conservan con `rating_mask = 0`, de modo
 #   que no cuentan ni en la pérdida ni en las métricas de rating.
 
 # %%
@@ -462,7 +448,7 @@ print(f"{N_TAGS} etiquetas conservadas:", TAGS)
 
 df["tags_kept"] = df["tags_clean"].map(lambda ts: [t for t in ts if t in TAG2IDX])
 no_tags = df["tags_kept"].map(len) == 0
-print("Problemas sin ninguna etiqueta conservada (eliminados):",
+print("Problemas sin ninguna etiqueta conservada:",
       no_tags.groupby(df["split"]).sum().to_dict())
 df = df[~no_tags].reset_index(drop=True)
 
@@ -479,11 +465,6 @@ train_ratings = df.loc[(df["split"] == "train") & df["rating"].notna(), "rating"
 RATING_MEAN, RATING_STD = float(train_ratings.mean()), float(train_ratings.std())
 df["rating_z"] = ((df["rating"] - RATING_MEAN) / RATING_STD).fillna(0.0).astype(np.float32)
 print(f"Rating en train: media={RATING_MEAN:.1f}, desviación={RATING_STD:.1f}")
-
-# Prueba rápida: muestras pequeñas (el vocabulario ya se calculó con todo train)
-if CONFIG["SMOKE_TEST"]:
-    df = pd.concat([df[df["split"] == s].sample(n, random_state=SEED)
-                    for s, n in SMOKE_SIZES.items()]).reset_index(drop=True)
 
 SPLITS = ["train", "val", "test"]
 data = {s: df[df["split"] == s].reset_index(drop=True) for s in SPLITS}
@@ -511,8 +492,7 @@ summary
 # <!-- TODO (autor): comentario sobre tamaños y fechas de los splits -->
 
 # %% [markdown]
-# Definimos un estilo común para las figuras: cada split y cada modelo tiene siempre el mismo
-# color.
+# Definimos un estilo común para las figuras.
 
 # %%
 COLORS = {"train": "#2a78d6", "val": "#eb6834", "test": "#1baf7a"}
@@ -547,31 +527,225 @@ tag_freq
 # <!-- TODO (autor): comentario sobre el desbalance de etiquetas -->
 
 # %% [markdown]
+# ### Coste del vocabulario
+#
+# Quedarnos con las `TOP_K_TAGS` etiquetas más frecuentes simplifica el problema, pero tiene un
+# coste: las etiquetas descartadas desaparecen y algunos problemas se quedan sin ninguna. Medimos
+# ese coste en train y cuánto cubren las K etiquetas más frecuentes para distintos valores de K.
+
+# %%
+from matplotlib.ticker import PercentFormatter
+
+# Coste del vocabulario, medido solo en train y antes de descartar problemas
+total_occ = sum(train_tag_counts.values())
+lost = {t: c for t, c in train_tag_counts.most_common() if t not in TAG2IDX}
+n_train_before = int((dates < val_cut).sum())       # problemas de train antes del filtro
+n_train_dropped = n_train_before - len(data["train"])
+keeps_all = (data["train"]["tags_clean"].map(len) == data["train"]["tags_kept"].map(len)).mean()
+
+print(f"Etiquetas distintas en train: {len(train_tag_counts)}; conservadas: {N_TAGS}")
+print(f"Apariciones de etiquetas perdidas: {sum(lost.values())} de {total_occ} "
+      f"({100 * sum(lost.values()) / total_occ:.1f}%)")
+print(f"Problemas de train descartados (sin ninguna etiqueta conservada, incluidos los que "
+      f"no tenían etiquetas): {n_train_dropped} de {n_train_before} "
+      f"({100 * n_train_dropped / n_train_before:.1f}%)")
+print(f"Problemas de train conservados con todas sus etiquetas: {100 * keeps_all:.1f}%")
+
+# Fracción de apariciones cubiertas al quedarnos con las K etiquetas más frecuentes
+counts_sorted = np.array([c for _, c in train_tag_counts.most_common()])
+coverage = np.cumsum(counts_sorted) / counts_sorted.sum()
+ks = np.arange(1, len(coverage) + 1)
+
+fig, ax = plt.subplots(figsize=(8, 3.8))
+ax.plot(ks, coverage, color=COLORS["train"], linewidth=2, marker="o", markersize=4)
+ax.axvline(N_TAGS, color="#0b0b0b", linestyle="--", linewidth=1.5)
+ax.annotate(f"K = {N_TAGS}: {100 * coverage[N_TAGS - 1]:.1f}%",
+            (N_TAGS, coverage[N_TAGS - 1]), xytext=(8, -18), textcoords="offset points")
+ax.yaxis.set_major_formatter(PercentFormatter(1))
+ax.set(title="Apariciones de etiquetas cubiertas por las K más frecuentes (train)",
+       xlabel="K (nº de etiquetas conservadas)", ylabel="Apariciones cubiertas")
+plt.tight_layout()
+plt.show()
+
+pd.Series(lost, name="apariciones en train").to_frame().T
+
+# %% [markdown]
+# <!-- TODO (autor): ¿es aceptable el coste de quedarse con TOP_K_TAGS etiquetas? -->
+
+# %% [markdown]
+# ### Coocurrencia de etiquetas
+#
+# Medimos qué etiquetas aparecen juntas en train con el *lift*:
+# $\text{lift}(A, B) = P(A, B) \,/\, (P(A)\,P(B))$. Un *lift* de 1 indica que aparecen juntas lo
+# esperable por azar; mayor que 1, que tienden a ir juntas, y menor que 1, que se evitan
+# (las parejas que nunca aparecen juntas se muestran en el azul más intenso). Si el
+# modelo aprende estas asociaciones, puede predecir pares de etiquetas aunque el texto solo dé
+# pistas de una de ellas.
+
+# %%
+Y_tr = np.stack(data["train"]["y_tags"])
+co = Y_tr.T @ Y_tr                              # nº de problemas de train con A y B
+p = Y_tr.mean(axis=0)
+lift = (co / len(Y_tr)) / np.outer(p, p)
+log_lift = np.log2(np.clip(lift, 2 ** -2, None))   # 0 apariciones juntas -> extremo azul
+np.fill_diagonal(log_lift, np.nan)
+
+fig, ax = plt.subplots(figsize=(10, 8))
+sns.heatmap(log_lift, xticklabels=TAGS, yticklabels=TAGS, cmap="RdBu_r", center=0,
+            vmin=-2, vmax=2, linewidths=0.5, linecolor="white",
+            cbar_kws={"label": "log2(lift)  (0 = independientes)"}, ax=ax)
+ax.set_title("Coocurrencia de etiquetas en train (rojo: juntas; azul: se evitan)")
+plt.tight_layout()
+plt.show()
+
+# Pares más asociados, con al menos 30 problemas en común
+pairs = [(TAGS[i], TAGS[j], int(co[i, j]), lift[i, j])
+         for i in range(N_TAGS) for j in range(i + 1, N_TAGS) if co[i, j] >= 30]
+top_pairs = pd.DataFrame(pairs, columns=["etiqueta A", "etiqueta B", "problemas", "lift"])
+top_pairs.sort_values("lift", ascending=False).head(10).round(2)
+
+# %% [markdown]
+# <!-- TODO (autor): ¿qué etiquetas aparecen juntas y cuáles se evitan? -->
+
+# %% [markdown]
 # ### Número de etiquetas por problema y distribución del rating
 
 # %%
-fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+from matplotlib.ticker import PercentFormatter
+
+fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
+
+# Izquierda: barras agrupadas por split, incluyendo problemas sin etiquetas
 max_tags = max(int(d["tags_kept"].map(len).max()) for d in data.values())
-bins = np.arange(0.5, max_tags + 1.5)
+counts = np.arange(0, max_tags + 1)
+width = 0.8 / len(SPLITS)
+for i, s in enumerate(SPLITS):
+    n_tags = data[s]["tags_kept"].map(len)
+    props = n_tags.value_counts(normalize=True).reindex(counts, fill_value=0)
+    offset = (i - (len(SPLITS) - 1) / 2) * width
+    axes[0].bar(counts + offset, props.values, width=width, color=COLORS[s],
+                label=f"{s} (n={len(n_tags):,})")
+axes[0].set_xticks(counts)
+axes[0].set(title="Etiquetas por problema", xlabel="Nº de etiquetas", ylabel="% de problemas")
+
+# Derecha: distribución acumulada del rating
 for s in SPLITS:
-    axes[0].hist(data[s]["tags_kept"].map(len), bins=bins, density=True, histtype="step",
-                 linewidth=2, color=COLORS[s], label=s)
-    axes[1].hist(data[s]["rating"].dropna(), bins=np.arange(750, 3600, 100), density=True,
-                 histtype="step", linewidth=2, color=COLORS[s], label=s)
-axes[0].set(title="Etiquetas por problema", xlabel="Nº de etiquetas", ylabel="Proporción")
-axes[1].set(title="Rating por split", xlabel="Rating", ylabel="Densidad")
+    r = np.sort(data[s]["rating"].dropna().to_numpy())
+    axes[1].step(r, np.arange(1, len(r) + 1) / len(r), where="post",
+                 linewidth=2, color=COLORS[s], label=f"{s} (mediana {np.median(r):.0f})")
+axes[1].set(title="Rating acumulado", xlabel="Rating", ylabel="% con rating ≤ x",
+            xlim=(800, 3500))
+
 for ax in axes:
+    ax.yaxis.set_major_formatter(PercentFormatter(1))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(axis="y", alpha=0.3)
     ax.legend(frameon=False)
+
 plt.tight_layout()
 plt.show()
+
 
 # %% [markdown]
 # <!-- TODO (autor): ¿cambia la distribución del rating con el tiempo? -->
 
 # %% [markdown]
+# ### Deriva temporal: rating, nº de etiquetas y problemas sin rating
+#
+# Como test contiene los problemas más recientes, cualquier cambio con el tiempo afecta a la
+# evaluación: si los problemas nuevos son más difíciles o se etiquetan de otra forma, el modelo se
+# evalúa en una distribución distinta de la que vio en train. Las líneas verticales marcan los
+# cortes entre train, val y test.
+
+# %%
+def year_frac(ts):
+    """Fecha como año decimal, para dibujar los cortes en un eje anual."""
+    return ts.year + (ts.dayofyear - 1) / 365.25
+
+
+by_year = df.assign(year=df["date"].dt.year, n_tags=df["tags_kept"].map(len),
+                    sin_rating=df["rating"].isna()).groupby("year")
+yearly = pd.DataFrame({
+    "problemas": by_year.size(),
+    "rating_q1": by_year["rating"].quantile(0.25),
+    "rating_med": by_year["rating"].median(),
+    "rating_q3": by_year["rating"].quantile(0.75),
+    "etiquetas_media": by_year["n_tags"].mean(),
+    "sin_rating": by_year["sin_rating"].mean(),
+})
+x = yearly.index + 0.5                             # centro de cada año
+end = year_frac(df["date"].max())
+
+fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+axes[0].fill_between(x, yearly["rating_q1"], yearly["rating_q3"], color=COLORS["train"],
+                     alpha=0.2, label="Rango intercuartílico")
+axes[0].plot(x, yearly["rating_med"], color=COLORS["train"], linewidth=2, marker="o",
+             label="Mediana")
+axes[0].set(title="Rating por año", ylabel="Rating")
+axes[0].legend(frameon=False, loc="upper left")
+axes[1].plot(x, yearly["etiquetas_media"], color=COLORS["train"], linewidth=2, marker="o")
+axes[1].set(title="Etiquetas conservadas por problema", ylabel="Media")
+axes[2].plot(x, yearly["sin_rating"], color=COLORS["train"], linewidth=2, marker="o")
+axes[2].yaxis.set_major_formatter(PercentFormatter(1))
+axes[2].set(title="Problemas sin rating", ylabel="% del año")
+for ax in axes:
+    ax.axvspan(year_frac(val_cut), year_frac(test_cut), color=COLORS["val"], alpha=0.10)
+    ax.axvspan(year_frac(test_cut), end, color=COLORS["test"], alpha=0.10)
+    for cut in (val_cut, test_cut):
+        ax.axvline(year_frac(cut), color="#52514e", linestyle=":", linewidth=1.2)
+    ax.set_xlabel("Año (sombreado: val y test)")
+plt.tight_layout()
+plt.show()
+
+# Problemas sin rating por split
+no_rating = pd.DataFrame({
+    s: {"problemas": len(d), "sin rating": int((d["rating_mask"] == 0).sum()),
+        "% sin rating": round(100 * (1 - d["rating_mask"].mean()), 1),
+        "fecha del primero sin rating": d.loc[d["rating_mask"] == 0, "date"].min()}
+    for s, d in data.items()}).T
+display(no_rating)
+yearly.round(2)
+
+# %% [markdown]
+# <!-- TODO (autor): ¿cambian el rating y el nº de etiquetas con el tiempo? ¿Dónde se concentran los problemas sin rating? ¿Qué implica para test? -->
+
+# %% [markdown]
+# ### Deriva de la frecuencia de cada etiqueta
+#
+# Comparamos la fracción de problemas con cada etiqueta en train, val y test. Si una etiqueta es
+# mucho más frecuente en test que en train, el modelo tenderá a predecirla menos de lo que debería
+# (y al revés). Parte del aumento puede deberse simplemente a que los problemas recientes llevan más
+# etiquetas cada uno (figura anterior).
+
+# %%
+tag_drift = tag_freq[[f"% {s}" for s in SPLITS]].copy()
+tag_drift["test − train (puntos)"] = tag_drift["% test"] - tag_drift["% train"]
+tag_drift = tag_drift.sort_values("test − train (puntos)")
+
+fig, ax = plt.subplots(figsize=(8, 7))
+ypos = np.arange(len(tag_drift))
+lo = tag_drift[[f"% {s}" for s in SPLITS]].min(axis=1)
+hi = tag_drift[[f"% {s}" for s in SPLITS]].max(axis=1)
+ax.hlines(ypos, lo, hi, color="#c3c2b7", linewidth=2)
+for s in SPLITS:
+    ax.scatter(tag_drift[f"% {s}"], ypos, s=50, color=COLORS[s], edgecolor="white",
+               linewidth=1.5, zorder=3, label=s)
+ax.set_yticks(ypos, tag_drift.index)
+ax.set(title="Frecuencia de cada etiqueta por split (ordenado por test − train)",
+       xlabel="% de problemas del split con la etiqueta")
+ax.grid(axis="y", visible=False)
+ax.legend(frameon=False, loc="lower right")
+plt.tight_layout()
+plt.show()
+tag_drift.round(1)
+
+# %% [markdown]
+# <!-- TODO (autor): ¿qué etiquetas ganan o pierden peso con el tiempo? -->
+
+# %% [markdown]
 # ### Longitud en tokens
 #
-# Tokenizamos los textos completos (sin truncar) con el tokenizador de ModernBERT para decidir
+# Tokenizamos los textos completos con el tokenizador de ModernBERT para decidir
 # `MAX_LEN` con datos y medir cuánto texto se pierde al truncar.
 
 # %%
@@ -607,18 +781,146 @@ plt.show()
 # tiene sentido: es la motivación del enfoque multitarea.
 
 # %%
-rated = data["train"][data["train"]["rating_mask"] == 1]
-by_tag = rated[["tags_kept", "rating"]].explode("tags_kept")
-order = by_tag.groupby("tags_kept")["rating"].median().sort_values().index
-fig, ax = plt.subplots(figsize=(8, 7))
-sns.boxplot(data=by_tag, y="tags_kept", x="rating", order=order, color="#9cc3ef",
-            fliersize=1.5, linewidth=1, ax=ax)
-ax.set(title="Rating por etiqueta (train)", xlabel="Rating", ylabel="")
+from sklearn.preprocessing import MultiLabelBinarizer
+from sklearn.linear_model import Ridge
+from sklearn.model_selection import cross_val_predict, KFold
+
+rated = data["train"][data["train"]["rating_mask"] == 1].copy()
+rated["n_tags"] = rated["tags_kept"].map(len)
+by_tag = rated[["tags_kept", "rating"]].explode("tags_kept").dropna(subset=["tags_kept"])
+
+def summarize(g):
+    return g.agg(med="median", q1=lambda r: r.quantile(0.25),
+                 q3=lambda r: r.quantile(0.75), n="size")
+
+stats = summarize(by_tag.groupby("tags_kept")["rating"]).sort_values("med")
+global_med = rated["rating"].median()
+
+# Baseline: cuánto rating explican solo las etiquetas
+X = np.column_stack([MultiLabelBinarizer(classes=stats.index).fit_transform(rated["tags_kept"]),
+                     rated["n_tags"]])
+y = rated["rating"].to_numpy()
+cv = KFold(5, shuffle=True, random_state=SEED)
+mae_tags = np.abs(y - cross_val_predict(Ridge(alpha=1.0), X, y, cv=cv)).mean()
+mae_const = np.abs(y - np.median(y)).mean()
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 7), gridspec_kw={"width_ratios": [3, 2]})
+
+# Izquierda: mediana + IQR por etiqueta, tamaño = nº de problemas
+ypos = np.arange(len(stats))
+colors = np.where(stats["med"] > global_med, "#d6604d",
+                  np.where(stats["med"] < global_med, "#4393c3", "gray"))
+ax1.hlines(ypos, stats["q1"], stats["q3"], color=colors, alpha=0.35, linewidth=7)
+ax1.scatter(stats["med"], ypos, s=20 + 250 * stats["n"] / stats["n"].max(),
+            color=colors, edgecolor="white", zorder=3)
+ax1.axvline(global_med, color="gray", ls="--", lw=1)
+ax1.text(global_med, len(stats) - 0.3, f" mediana global {global_med:.0f}",
+         color="gray", fontsize=9, va="bottom")
+ax1.set_yticks(ypos, [f"{t}  (n={n:,})" for t, n in zip(stats.index, stats["n"])])
+ax1.set(xlabel="Rating", title="Mediana y rango intercuartílico por etiqueta")
+
+# Derecha: rating según nº de etiquetas
+nt = summarize(rated.groupby("n_tags")["rating"])
+nt = nt[nt["n"] >= 30]
+ax2.fill_between(nt.index, nt["q1"], nt["q3"], color="gray", alpha=0.2, label="IQR")
+ax2.plot(nt.index, nt["med"], marker="o", color="black", label="Mediana")
+for k, row in nt.iterrows():
+    ax2.annotate(f"n={int(row['n']):,}", (k, row["q1"]), textcoords="offset points",
+                 xytext=(0, -14), ha="center", fontsize=8, color="gray")
+ax2.set_xticks(nt.index)
+ax2.set(xlabel="Nº de etiquetas conservadas", ylabel="Rating",
+        title="Rating según nº de etiquetas")
+ax2.legend(frameon=False, loc="upper left")
+
+for ax in (ax1, ax2):
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(axis="x" if ax is ax1 else "y", alpha=0.3)
+
+fig.suptitle(f"MAE prediciendo siempre la mediana: {mae_const:.0f}  ·  "
+             f"MAE con solo las etiquetas (Ridge, CV-5): {mae_tags:.0f}", fontsize=12)
 plt.tight_layout()
 plt.show()
 
 # %% [markdown]
 # <!-- TODO (autor): etiquetas más fáciles y más difíciles -->
+
+# %% [markdown]
+# ### Restricciones del enunciado: cota de `n`
+#
+# La introducción plantea que las cotas del apartado de entrada son una pista clave sobre la
+# solución: con $n \le 20$ cabe una búsqueda exponencial (`bitmasks`, `brute force`), mientras que
+# con $n \le 2 \cdot 10^5$ hace falta algo como $O(n \log n)$. Extraemos de cada enunciado de
+# train la cota superior de `n` (o de la longitud `|s|` en problemas de cadenas) y comprobamos si
+# se relaciona con el rating y con las etiquetas. La extracción es heurística y no siempre
+# encuentra una cota.
+
+# %%
+def extract_n_bound(input_format):
+    """Cota superior de n (o de |s|) en el apartado de entrada, o NaN si no se encuentra."""
+    t = clean_latex(input_format).replace("≤", "<=")
+    t = re.sub(r"[·⋅×]", "*", t).replace("\\,", "")
+    t = re.sub(r"(?<=\d) (?=\d{3}\b)", "", t)          # 100 000 -> 100000
+    t = re.sub(r"\s*\^\s*", "^", t)                     # 10 ^ 5 -> 10^5
+    m = re.search(r"(?:(?<![\w|])n|\|s\|)(?:\s*,\s*[a-z])*\s*<=\s*"
+                  r"(?:(\d+(?:\.\d+)?)\s*\*\s*)?(10\^\d+|\d+)", t)
+    if m is None:
+        return np.nan
+    factor, base = float(m.group(1) or 1), m.group(2)
+    if base.startswith("10^"):
+        value = 10.0 ** int(base[3:])
+    elif re.fullmatch(r"10\d{1,2}", base) and int(base) % 10 != 0:
+        # Problemas antiguos donde se perdió el superíndice: "105" significa 10^5
+        value = 10.0 ** int(base[2:])
+    else:
+        value = float(base)
+    return factor * value
+
+
+bnd = data["train"][data["train"]["rating_mask"] == 1].copy()
+bnd["n_max"] = bnd["input_format"].map(extract_n_bound)
+print(f"Problemas de train con rating y cota extraída: {bnd['n_max'].notna().mean():.1%}")
+bnd = bnd.dropna(subset=["n_max"])
+rho = spearmanr(np.log10(bnd["n_max"]), bnd["rating"]).correlation
+print(f"Correlación de Spearman entre log10(cota) y rating: {rho:.3f}")
+
+bins = [0, 20, 100, 5_000, 1_000_000, np.inf]
+labels = ["≤ 20", "21–100", "101–5000", "5001–10^6", "> 10^6"]
+bnd["rango"] = pd.cut(bnd["n_max"], bins=bins, labels=labels)
+per_range = bnd.groupby("rango", observed=False)["rating"].agg(
+    q1=lambda r: r.quantile(0.25), mediana="median", q3=lambda r: r.quantile(0.75), n="size")
+
+# Lift de cada etiqueta en cada rango: P(etiqueta | rango) / P(etiqueta)
+Y_bnd = np.stack(bnd["y_tags"])
+prior_bnd = Y_bnd.mean(axis=0)
+lift_rng = np.stack([Y_bnd[(bnd["rango"] == r).to_numpy()].mean(axis=0) / prior_bnd
+                     for r in labels], axis=1)
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6), gridspec_kw={"width_ratios": [2, 3]})
+xr = np.arange(len(labels))
+ax1.fill_between(xr, per_range["q1"], per_range["q3"], color=COLORS["train"], alpha=0.2,
+                 label="Rango intercuartílico")
+ax1.plot(xr, per_range["mediana"], color=COLORS["train"], linewidth=2, marker="o",
+         label="Mediana")
+for k, n in enumerate(per_range["n"]):
+    ax1.annotate(f"n={n:,}", (k, per_range["q1"].iloc[k]), xytext=(0, -14),
+                 textcoords="offset points", ha="center", fontsize=8, color="#52514e")
+ax1.set_xticks(xr, labels)
+ax1.set(title="Rating según la cota de n (train)", xlabel="Cota superior de n",
+        ylabel="Rating")
+ax1.legend(frameon=False, loc="upper left")
+
+sns.heatmap(np.log2(np.clip(lift_rng, 2 ** -2, None)), xticklabels=labels, yticklabels=TAGS,
+            cmap="RdBu_r", center=0, vmin=-2, vmax=2, linewidths=0.5, linecolor="white",
+            cbar_kws={"label": "log2(lift)  (0 = frecuencia media)"}, ax=ax2)
+ax2.set(title="Frecuencia de cada etiqueta según la cota de n (train)",
+        xlabel="Cota superior de n")
+plt.tight_layout()
+plt.show()
+per_range.round(0)
+
+
+# %% [markdown]
+# <!-- TODO (autor): ¿se relaciona la cota de n con el rating y con alguna etiqueta? ¿Confirma lo que dice la introducción? -->
 
 # %% [markdown]
 # ## 3.7. Tokenización y datasets para el `Trainer`
