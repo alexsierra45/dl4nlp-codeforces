@@ -29,7 +29,7 @@
 # 1. Abrir el notebook en Google Colab y seleccionar *Entorno de ejecución → Cambiar tipo de
 #    entorno de ejecución → GPU T4*.
 # 2. (Opcional) Añadir el token de Hugging Face como secreto de Colab con el nombre `HF_TOKEN`
-#    (icono 🔑 de la barra lateral). Sin token el notebook funciona igual, pero no sube nada al Hub.
+#    (icono de la llave de la barra lateral). Sin token el notebook funciona igual, pero no sube nada al Hub.
 # 3. Ejecutar *Entorno de ejecución → Ejecutar todo*.
 #
 # Dos *flags* de la celda de configuración controlan la ejecución:
