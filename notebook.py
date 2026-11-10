@@ -11,7 +11,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.6
 #   kernelspec:
-#     display_name: .venv (3.10.12)
+#     display_name: Python 3
 #     language: python
 #     name: python3
 # ---
@@ -19,6 +19,9 @@
 # %% [markdown]
 # # Predicción de etiquetas algorítmicas y dificultad de problemas de Codeforces
 # ## Ajuste fino multitarea de ModernBERT
+#
+# [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](
+# https://colab.research.google.com/github/alexsierra45/dl4nlp-codeforces/blob/main/Sierra_Alcala_Alex.ipynb)
 #
 # **Instrucciones de ejecución**
 #
@@ -489,9 +492,6 @@ summary = pd.DataFrame({
 summary
 
 # %% [markdown]
-# <!-- TODO (autor): comentario sobre tamaños y fechas de los splits -->
-
-# %% [markdown]
 # Definimos un estilo común para las figuras.
 
 # %%
@@ -524,9 +524,6 @@ plt.show()
 tag_freq
 
 # %% [markdown]
-# <!-- TODO (autor): comentario sobre el desbalance de etiquetas -->
-
-# %% [markdown]
 # ### Coste del vocabulario
 #
 # Quedarnos con las `TOP_K_TAGS` etiquetas más frecuentes simplifica el problema, pero tiene un
@@ -536,10 +533,9 @@ tag_freq
 # %%
 from matplotlib.ticker import PercentFormatter
 
-# Coste del vocabulario, medido solo en train y antes de descartar problemas
 total_occ = sum(train_tag_counts.values())
 lost = {t: c for t, c in train_tag_counts.most_common() if t not in TAG2IDX}
-n_train_before = int((dates < val_cut).sum())       # problemas de train antes del filtro
+n_train_before = int((dates < val_cut).sum())
 n_train_dropped = n_train_before - len(data["train"])
 keeps_all = (data["train"]["tags_clean"].map(len) == data["train"]["tags_kept"].map(len)).mean()
 
@@ -551,7 +547,6 @@ print(f"Problemas de train descartados (sin ninguna etiqueta conservada, incluid
       f"({100 * n_train_dropped / n_train_before:.1f}%)")
 print(f"Problemas de train conservados con todas sus etiquetas: {100 * keeps_all:.1f}%")
 
-# Fracción de apariciones cubiertas al quedarnos con las K etiquetas más frecuentes
 counts_sorted = np.array([c for _, c in train_tag_counts.most_common()])
 coverage = np.cumsum(counts_sorted) / counts_sorted.sum()
 ks = np.arange(1, len(coverage) + 1)
@@ -570,24 +565,20 @@ plt.show()
 pd.Series(lost, name="apariciones en train").to_frame().T
 
 # %% [markdown]
-# <!-- TODO (autor): ¿es aceptable el coste de quedarse con TOP_K_TAGS etiquetas? -->
-
-# %% [markdown]
 # ### Coocurrencia de etiquetas
 #
 # Medimos qué etiquetas aparecen juntas en train con el *lift*:
 # $\text{lift}(A, B) = P(A, B) \,/\, (P(A)\,P(B))$. Un *lift* de 1 indica que aparecen juntas lo
-# esperable por azar; mayor que 1, que tienden a ir juntas, y menor que 1, que se evitan
-# (las parejas que nunca aparecen juntas se muestran en el azul más intenso). Si el
+# esperable por azar; mayor que 1, que tienden a ir juntas, y menor que 1, que se evitan. Si el
 # modelo aprende estas asociaciones, puede predecir pares de etiquetas aunque el texto solo dé
 # pistas de una de ellas.
 
 # %%
 Y_tr = np.stack(data["train"]["y_tags"])
-co = Y_tr.T @ Y_tr                              # nº de problemas de train con A y B
+co = Y_tr.T @ Y_tr
 p = Y_tr.mean(axis=0)
 lift = (co / len(Y_tr)) / np.outer(p, p)
-log_lift = np.log2(np.clip(lift, 2 ** -2, None))   # 0 apariciones juntas -> extremo azul
+log_lift = np.log2(np.clip(lift, 2 ** -2, None))
 np.fill_diagonal(log_lift, np.nan)
 
 fig, ax = plt.subplots(figsize=(10, 8))
@@ -598,14 +589,10 @@ ax.set_title("Coocurrencia de etiquetas en train (rojo: juntas; azul: se evitan)
 plt.tight_layout()
 plt.show()
 
-# Pares más asociados, con al menos 30 problemas en común
 pairs = [(TAGS[i], TAGS[j], int(co[i, j]), lift[i, j])
          for i in range(N_TAGS) for j in range(i + 1, N_TAGS) if co[i, j] >= 30]
 top_pairs = pd.DataFrame(pairs, columns=["etiqueta A", "etiqueta B", "problemas", "lift"])
 top_pairs.sort_values("lift", ascending=False).head(10).round(2)
-
-# %% [markdown]
-# <!-- TODO (autor): ¿qué etiquetas aparecen juntas y cuáles se evitan? -->
 
 # %% [markdown]
 # ### Número de etiquetas por problema y distribución del rating
@@ -615,7 +602,6 @@ from matplotlib.ticker import PercentFormatter
 
 fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
 
-# Izquierda: barras agrupadas por split, incluyendo problemas sin etiquetas
 max_tags = max(int(d["tags_kept"].map(len).max()) for d in data.values())
 counts = np.arange(0, max_tags + 1)
 width = 0.8 / len(SPLITS)
@@ -628,7 +614,6 @@ for i, s in enumerate(SPLITS):
 axes[0].set_xticks(counts)
 axes[0].set(title="Etiquetas por problema", xlabel="Nº de etiquetas", ylabel="% de problemas")
 
-# Derecha: distribución acumulada del rating
 for s in SPLITS:
     r = np.sort(data[s]["rating"].dropna().to_numpy())
     axes[1].step(r, np.arange(1, len(r) + 1) / len(r), where="post",
@@ -644,103 +629,6 @@ for ax in axes:
 
 plt.tight_layout()
 plt.show()
-
-
-# %% [markdown]
-# <!-- TODO (autor): ¿cambia la distribución del rating con el tiempo? -->
-
-# %% [markdown]
-# ### Deriva temporal: rating, nº de etiquetas y problemas sin rating
-#
-# Como test contiene los problemas más recientes, cualquier cambio con el tiempo afecta a la
-# evaluación: si los problemas nuevos son más difíciles o se etiquetan de otra forma, el modelo se
-# evalúa en una distribución distinta de la que vio en train. Las líneas verticales marcan los
-# cortes entre train, val y test.
-
-# %%
-def year_frac(ts):
-    """Fecha como año decimal, para dibujar los cortes en un eje anual."""
-    return ts.year + (ts.dayofyear - 1) / 365.25
-
-
-by_year = df.assign(year=df["date"].dt.year, n_tags=df["tags_kept"].map(len),
-                    sin_rating=df["rating"].isna()).groupby("year")
-yearly = pd.DataFrame({
-    "problemas": by_year.size(),
-    "rating_q1": by_year["rating"].quantile(0.25),
-    "rating_med": by_year["rating"].median(),
-    "rating_q3": by_year["rating"].quantile(0.75),
-    "etiquetas_media": by_year["n_tags"].mean(),
-    "sin_rating": by_year["sin_rating"].mean(),
-})
-x = yearly.index + 0.5                             # centro de cada año
-end = year_frac(df["date"].max())
-
-fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-axes[0].fill_between(x, yearly["rating_q1"], yearly["rating_q3"], color=COLORS["train"],
-                     alpha=0.2, label="Rango intercuartílico")
-axes[0].plot(x, yearly["rating_med"], color=COLORS["train"], linewidth=2, marker="o",
-             label="Mediana")
-axes[0].set(title="Rating por año", ylabel="Rating")
-axes[0].legend(frameon=False, loc="upper left")
-axes[1].plot(x, yearly["etiquetas_media"], color=COLORS["train"], linewidth=2, marker="o")
-axes[1].set(title="Etiquetas conservadas por problema", ylabel="Media")
-axes[2].plot(x, yearly["sin_rating"], color=COLORS["train"], linewidth=2, marker="o")
-axes[2].yaxis.set_major_formatter(PercentFormatter(1))
-axes[2].set(title="Problemas sin rating", ylabel="% del año")
-for ax in axes:
-    ax.axvspan(year_frac(val_cut), year_frac(test_cut), color=COLORS["val"], alpha=0.10)
-    ax.axvspan(year_frac(test_cut), end, color=COLORS["test"], alpha=0.10)
-    for cut in (val_cut, test_cut):
-        ax.axvline(year_frac(cut), color="#52514e", linestyle=":", linewidth=1.2)
-    ax.set_xlabel("Año (sombreado: val y test)")
-plt.tight_layout()
-plt.show()
-
-# Problemas sin rating por split
-no_rating = pd.DataFrame({
-    s: {"problemas": len(d), "sin rating": int((d["rating_mask"] == 0).sum()),
-        "% sin rating": round(100 * (1 - d["rating_mask"].mean()), 1),
-        "fecha del primero sin rating": d.loc[d["rating_mask"] == 0, "date"].min()}
-    for s, d in data.items()}).T
-display(no_rating)
-yearly.round(2)
-
-# %% [markdown]
-# <!-- TODO (autor): ¿cambian el rating y el nº de etiquetas con el tiempo? ¿Dónde se concentran los problemas sin rating? ¿Qué implica para test? -->
-
-# %% [markdown]
-# ### Deriva de la frecuencia de cada etiqueta
-#
-# Comparamos la fracción de problemas con cada etiqueta en train, val y test. Si una etiqueta es
-# mucho más frecuente en test que en train, el modelo tenderá a predecirla menos de lo que debería
-# (y al revés). Parte del aumento puede deberse simplemente a que los problemas recientes llevan más
-# etiquetas cada uno (figura anterior).
-
-# %%
-tag_drift = tag_freq[[f"% {s}" for s in SPLITS]].copy()
-tag_drift["test − train (puntos)"] = tag_drift["% test"] - tag_drift["% train"]
-tag_drift = tag_drift.sort_values("test − train (puntos)")
-
-fig, ax = plt.subplots(figsize=(8, 7))
-ypos = np.arange(len(tag_drift))
-lo = tag_drift[[f"% {s}" for s in SPLITS]].min(axis=1)
-hi = tag_drift[[f"% {s}" for s in SPLITS]].max(axis=1)
-ax.hlines(ypos, lo, hi, color="#c3c2b7", linewidth=2)
-for s in SPLITS:
-    ax.scatter(tag_drift[f"% {s}"], ypos, s=50, color=COLORS[s], edgecolor="white",
-               linewidth=1.5, zorder=3, label=s)
-ax.set_yticks(ypos, tag_drift.index)
-ax.set(title="Frecuencia de cada etiqueta por split (ordenado por test − train)",
-       xlabel="% de problemas del split con la etiqueta")
-ax.grid(axis="y", visible=False)
-ax.legend(frameon=False, loc="lower right")
-plt.tight_layout()
-plt.show()
-tag_drift.round(1)
-
-# %% [markdown]
-# <!-- TODO (autor): ¿qué etiquetas ganan o pierden peso con el tiempo? -->
 
 # %% [markdown]
 # ### Longitud en tokens
@@ -771,163 +659,12 @@ ax.set(title="Longitud de los enunciados en tokens (recortada a 3000)",
 plt.tight_layout()
 plt.show()
 
-# %% [markdown]
-# <!-- TODO (autor): % de textos truncados con 512 y con 1024 tokens -->
-
-# %% [markdown]
-# ### Rating por etiqueta
-#
-# Si las etiquetas se relacionan con la dificultad, compartir el *encoder* entre las dos tareas
-# tiene sentido: es la motivación del enfoque multitarea.
-
-# %%
-from sklearn.preprocessing import MultiLabelBinarizer
-from sklearn.linear_model import Ridge
-from sklearn.model_selection import cross_val_predict, KFold
-
-rated = data["train"][data["train"]["rating_mask"] == 1].copy()
-rated["n_tags"] = rated["tags_kept"].map(len)
-by_tag = rated[["tags_kept", "rating"]].explode("tags_kept").dropna(subset=["tags_kept"])
-
-def summarize(g):
-    return g.agg(med="median", q1=lambda r: r.quantile(0.25),
-                 q3=lambda r: r.quantile(0.75), n="size")
-
-stats = summarize(by_tag.groupby("tags_kept")["rating"]).sort_values("med")
-global_med = rated["rating"].median()
-
-# Baseline: cuánto rating explican solo las etiquetas
-X = np.column_stack([MultiLabelBinarizer(classes=stats.index).fit_transform(rated["tags_kept"]),
-                     rated["n_tags"]])
-y = rated["rating"].to_numpy()
-cv = KFold(5, shuffle=True, random_state=SEED)
-mae_tags = np.abs(y - cross_val_predict(Ridge(alpha=1.0), X, y, cv=cv)).mean()
-mae_const = np.abs(y - np.median(y)).mean()
-
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 7), gridspec_kw={"width_ratios": [3, 2]})
-
-# Izquierda: mediana + IQR por etiqueta, tamaño = nº de problemas
-ypos = np.arange(len(stats))
-colors = np.where(stats["med"] > global_med, "#d6604d",
-                  np.where(stats["med"] < global_med, "#4393c3", "gray"))
-ax1.hlines(ypos, stats["q1"], stats["q3"], color=colors, alpha=0.35, linewidth=7)
-ax1.scatter(stats["med"], ypos, s=20 + 250 * stats["n"] / stats["n"].max(),
-            color=colors, edgecolor="white", zorder=3)
-ax1.axvline(global_med, color="gray", ls="--", lw=1)
-ax1.text(global_med, len(stats) - 0.3, f" mediana global {global_med:.0f}",
-         color="gray", fontsize=9, va="bottom")
-ax1.set_yticks(ypos, [f"{t}  (n={n:,})" for t, n in zip(stats.index, stats["n"])])
-ax1.set(xlabel="Rating", title="Mediana y rango intercuartílico por etiqueta")
-
-# Derecha: rating según nº de etiquetas
-nt = summarize(rated.groupby("n_tags")["rating"])
-nt = nt[nt["n"] >= 30]
-ax2.fill_between(nt.index, nt["q1"], nt["q3"], color="gray", alpha=0.2, label="IQR")
-ax2.plot(nt.index, nt["med"], marker="o", color="black", label="Mediana")
-for k, row in nt.iterrows():
-    ax2.annotate(f"n={int(row['n']):,}", (k, row["q1"]), textcoords="offset points",
-                 xytext=(0, -14), ha="center", fontsize=8, color="gray")
-ax2.set_xticks(nt.index)
-ax2.set(xlabel="Nº de etiquetas conservadas", ylabel="Rating",
-        title="Rating según nº de etiquetas")
-ax2.legend(frameon=False, loc="upper left")
-
-for ax in (ax1, ax2):
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.grid(axis="x" if ax is ax1 else "y", alpha=0.3)
-
-fig.suptitle(f"MAE prediciendo siempre la mediana: {mae_const:.0f}  ·  "
-             f"MAE con solo las etiquetas (Ridge, CV-5): {mae_tags:.0f}", fontsize=12)
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# <!-- TODO (autor): etiquetas más fáciles y más difíciles -->
-
-# %% [markdown]
-# ### Restricciones del enunciado: cota de `n`
-#
-# La introducción plantea que las cotas del apartado de entrada son una pista clave sobre la
-# solución: con $n \le 20$ cabe una búsqueda exponencial (`bitmasks`, `brute force`), mientras que
-# con $n \le 2 \cdot 10^5$ hace falta algo como $O(n \log n)$. Extraemos de cada enunciado de
-# train la cota superior de `n` (o de la longitud `|s|` en problemas de cadenas) y comprobamos si
-# se relaciona con el rating y con las etiquetas. La extracción es heurística y no siempre
-# encuentra una cota.
-
-# %%
-def extract_n_bound(input_format):
-    """Cota superior de n (o de |s|) en el apartado de entrada, o NaN si no se encuentra."""
-    t = clean_latex(input_format).replace("≤", "<=")
-    t = re.sub(r"[·⋅×]", "*", t).replace("\\,", "")
-    t = re.sub(r"(?<=\d) (?=\d{3}\b)", "", t)          # 100 000 -> 100000
-    t = re.sub(r"\s*\^\s*", "^", t)                     # 10 ^ 5 -> 10^5
-    m = re.search(r"(?:(?<![\w|])n|\|s\|)(?:\s*,\s*[a-z])*\s*<=\s*"
-                  r"(?:(\d+(?:\.\d+)?)\s*\*\s*)?(10\^\d+|\d+)", t)
-    if m is None:
-        return np.nan
-    factor, base = float(m.group(1) or 1), m.group(2)
-    if base.startswith("10^"):
-        value = 10.0 ** int(base[3:])
-    elif re.fullmatch(r"10\d{1,2}", base) and int(base) % 10 != 0:
-        # Problemas antiguos donde se perdió el superíndice: "105" significa 10^5
-        value = 10.0 ** int(base[2:])
-    else:
-        value = float(base)
-    return factor * value
-
-
-bnd = data["train"][data["train"]["rating_mask"] == 1].copy()
-bnd["n_max"] = bnd["input_format"].map(extract_n_bound)
-print(f"Problemas de train con rating y cota extraída: {bnd['n_max'].notna().mean():.1%}")
-bnd = bnd.dropna(subset=["n_max"])
-rho = spearmanr(np.log10(bnd["n_max"]), bnd["rating"]).correlation
-print(f"Correlación de Spearman entre log10(cota) y rating: {rho:.3f}")
-
-bins = [0, 20, 100, 5_000, 1_000_000, np.inf]
-labels = ["≤ 20", "21–100", "101–5000", "5001–10^6", "> 10^6"]
-bnd["rango"] = pd.cut(bnd["n_max"], bins=bins, labels=labels)
-per_range = bnd.groupby("rango", observed=False)["rating"].agg(
-    q1=lambda r: r.quantile(0.25), mediana="median", q3=lambda r: r.quantile(0.75), n="size")
-
-# Lift de cada etiqueta en cada rango: P(etiqueta | rango) / P(etiqueta)
-Y_bnd = np.stack(bnd["y_tags"])
-prior_bnd = Y_bnd.mean(axis=0)
-lift_rng = np.stack([Y_bnd[(bnd["rango"] == r).to_numpy()].mean(axis=0) / prior_bnd
-                     for r in labels], axis=1)
-
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6), gridspec_kw={"width_ratios": [2, 3]})
-xr = np.arange(len(labels))
-ax1.fill_between(xr, per_range["q1"], per_range["q3"], color=COLORS["train"], alpha=0.2,
-                 label="Rango intercuartílico")
-ax1.plot(xr, per_range["mediana"], color=COLORS["train"], linewidth=2, marker="o",
-         label="Mediana")
-for k, n in enumerate(per_range["n"]):
-    ax1.annotate(f"n={n:,}", (k, per_range["q1"].iloc[k]), xytext=(0, -14),
-                 textcoords="offset points", ha="center", fontsize=8, color="#52514e")
-ax1.set_xticks(xr, labels)
-ax1.set(title="Rating según la cota de n (train)", xlabel="Cota superior de n",
-        ylabel="Rating")
-ax1.legend(frameon=False, loc="upper left")
-
-sns.heatmap(np.log2(np.clip(lift_rng, 2 ** -2, None)), xticklabels=labels, yticklabels=TAGS,
-            cmap="RdBu_r", center=0, vmin=-2, vmax=2, linewidths=0.5, linecolor="white",
-            cbar_kws={"label": "log2(lift)  (0 = frecuencia media)"}, ax=ax2)
-ax2.set(title="Frecuencia de cada etiqueta según la cota de n (train)",
-        xlabel="Cota superior de n")
-plt.tight_layout()
-plt.show()
-per_range.round(0)
-
-
-# %% [markdown]
-# <!-- TODO (autor): ¿se relaciona la cota de n con el rating y con alguna etiqueta? ¿Confirma lo que dice la introducción? -->
 
 # %% [markdown]
 # ## 3.7. Tokenización y datasets para el `Trainer`
 #
 # Tokenizamos con `truncation=True` y `max_length=MAX_LEN`, **sin padding**: el relleno se añade en
-# cada lote, solo hasta la longitud del texto más largo del lote (*padding dinámico*), lo que
-# ahorra mucho cómputo frente al `padding="max_length"` del notebook 6. Guardamos también la
+# cada lote, solo hasta la longitud del texto más largo del lote. Guardamos también la
 # longitud (`length`) para agrupar textos de longitud parecida en el mismo lote.
 
 # %%
@@ -966,8 +703,7 @@ if PUSH_TO_HUB:
 #
 # ## 4.1. Arquitectura del modelo
 #
-# Los notebooks de clase usan cabezas ya hechas (`AutoModelForSequenceClassification`,
-# `AutoModelForCausalLM`). Aquí **no existe una clase estándar** que resuelva clasificación
+# No existe una clase estándar que resuelva clasificación
 # multi-etiqueta y regresión a la vez, así que definimos una propia:
 #
 # ```
@@ -978,13 +714,6 @@ if PUSH_TO_HUB:
 #
 # - **Mean pooling** sobre `attention_mask`: promedia los vectores de todos los tokens reales del
 #   texto.
-# - Heredamos de `PretrainedConfig` y `PreTrainedModel`, con lo que funcionan `save_pretrained`,
-#   `push_to_hub` y `from_pretrained`. La configuración guarda todo lo necesario para usar el modelo
-#   sin el notebook: nombres de las etiquetas, `pos_weight`, media y desviación del rating y
-#   umbrales de decisión por etiqueta.
-# - En `__init__` el *encoder* se crea **vacío** con `AutoModel.from_config`; los pesos
-#   preentrenados se cargan solo en `from_base`, al empezar el entrenamiento. Así, al cargar el
-#   modelo ya ajustado con `from_pretrained`, no se descargan los pesos dos veces.
 #
 # ## 4.2. Función de pérdida
 #
@@ -1006,7 +735,7 @@ if PUSH_TO_HUB:
 
 # %%
 class CFMultiTaskConfig(PretrainedConfig):
-    """Configuración del modelo multitarea (se guarda en config.json en el Hub)."""
+    """Configuración del modelo multitarea."""
 
     model_type = "cf_multitask"
 
@@ -1044,8 +773,7 @@ class CFMultiTaskModel(PreTrainedModel):
         super().__init__(config)
         enc_kwargs = dict(config.encoder_config)
         enc_config = AutoConfig.for_model(enc_kwargs.pop("model_type"), **enc_kwargs)
-        # Encoder sin pesos preentrenados: se rellenan con from_base o from_pretrained.
-        # La T4 no soporta FlashAttention 2, así que usamos la atención SDPA de PyTorch.
+        
         self.encoder = AutoModel.from_config(enc_config, attn_implementation="sdpa")
         hidden = enc_config.hidden_size
         self.dropout = nn.Dropout(config.dropout)
@@ -1056,7 +784,6 @@ class CFMultiTaskModel(PreTrainedModel):
         self.post_init()
 
     def _init_weights(self, module):
-        # Solo inicializamos nuestras cabezas; el encoder usa su propia inicialización
         if module in (self.tags_head, self.rating_head):
             module.weight.data.normal_(mean=0.0, std=0.02)
             module.bias.data.zero_()
@@ -1075,7 +802,7 @@ class CFMultiTaskModel(PreTrainedModel):
     def forward(self, input_ids=None, attention_mask=None, labels_tags=None,
                 labels_rating=None, rating_mask=None, **kwargs):
         hidden = self.encoder(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
-        # Mean pooling: media de los vectores de los tokens reales (sin padding)
+        
         mask = attention_mask.unsqueeze(-1).to(hidden.dtype)
         pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-6)
         pooled = self.dropout(pooled)
@@ -1084,7 +811,7 @@ class CFMultiTaskModel(PreTrainedModel):
 
         loss = None
         if labels_tags is not None:
-            # Calculamos la pérdida en float32 para evitar problemas numéricos con fp16
+            
             bce = F.binary_cross_entropy_with_logits(
                 tag_logits.float(), labels_tags.float(), pos_weight=self.pos_weight)
             m = rating_mask.float()
@@ -1094,7 +821,6 @@ class CFMultiTaskModel(PreTrainedModel):
         return CFMultiTaskOutput(loss=loss, tag_logits=tag_logits, rating_pred=rating_pred)
 
 
-# pos_weight por etiqueta, calculado solo con train: w_k = min(neg_k / pos_k, 10)
 Y_train = np.stack(data["train"]["y_tags"])
 pos = Y_train.sum(axis=0)
 POS_WEIGHT = np.minimum((len(Y_train) - pos) / np.maximum(pos, 1),
@@ -1107,13 +833,12 @@ pd.DataFrame({"positivos en train": pos.astype(int), "pos_weight": POS_WEIGHT}, 
 # El *collator* forma cada lote: rellena `input_ids` y `attention_mask` hasta la longitud máxima
 # del lote y apila las tres etiquetas en tensores `float32`.
 #
-# Las métricas se definen una sola vez y se usan para **todos** los modelos (el ajustado y los
-# baselines), para que la comparación sea justa:
+# Las métricas se definen una sola vez y se usan para todos los modelos, para que la comparación sea justa:
 #
 # - **Etiquetas:** F1 micro (dominado por las etiquetas frecuentes), F1 macro (media por etiqueta,
 #   sensible a las raras), F1 por muestra, mAP macro (calidad del orden de las probabilidades,
 #   independiente del umbral) y *subset accuracy* (acertar exactamente el conjunto de etiquetas).
-# - **Rating** (en la escala original y solo con `rating_mask = 1`): MAE, RMSE, correlación de
+# - **Rating** (solo con `rating_mask = 1`): MAE, RMSE, correlación de
 #   Spearman y % de predicciones con error absoluto ≤ 200.
 
 # %%
@@ -1139,7 +864,7 @@ collator = MultiTaskCollator(tokenizer)
 def tag_metrics(y_true, scores, thresholds=0.5):
     """Métricas multi-etiqueta; `thresholds` puede ser un escalar o un vector por etiqueta."""
     y_pred = (scores >= np.asarray(thresholds)).astype(int)
-    has_pos = y_true.sum(axis=0) > 0  # el mAP no está definido para etiquetas sin positivos
+    has_pos = y_true.sum(axis=0) > 0 
     return {
         "f1_micro": f1_score(y_true, y_pred, average="micro", zero_division=0),
         "f1_macro": f1_score(y_true, y_pred, average="macro", zero_division=0),
@@ -1177,7 +902,7 @@ def compute_metrics(eval_pred):
 #
 # | Parámetro | Valor | Justificación |
 # |---|---|---|
-# | `max_length` | 1024 | Cubre la mayoría de enunciados (sección 3.6); el resto se trunca por el final |
+# | `max_length` | 1024 | Cubre la mayoría de enunciados; el resto se trunca por el final |
 # | `learning_rate` | 5e-5 | Valor habitual para el ajuste fino completo de *encoders* de este tamaño |
 # | `per_device_train_batch_size` | 8 | Cabe en la T4 con 1024 tokens en fp16 |
 # | `gradient_accumulation_steps` | 2 | Lote efectivo de 16 |
@@ -1199,7 +924,7 @@ training_args = TrainingArguments(
     per_device_train_batch_size=CONFIG["BATCH_SIZE"],
     per_device_eval_batch_size=2 * CONFIG["BATCH_SIZE"],
     gradient_accumulation_steps=CONFIG["GRAD_ACCUM"],
-    warmup_steps=CONFIG["WARMUP_RATIO"],          # float < 1: proporción de pasos
+    warmup_steps=CONFIG["WARMUP_RATIO"],
     lr_scheduler_type="linear",
     weight_decay=CONFIG["WEIGHT_DECAY"],
     fp16=torch.cuda.is_available(),
@@ -1290,9 +1015,6 @@ eval_cols = ["eval_loss", "eval_f1_micro", "eval_f1_macro", "eval_map_macro", "e
 eval_logs[eval_cols].round(4)
 
 # %% [markdown]
-# <!-- TODO (autor): tiempo real de entrenamiento, época elegida, ¿hay sobreajuste? -->
-
-# %% [markdown]
 # # 5. Resultados y discusión
 #
 # ## 5.1. Predicciones y ajuste de umbrales
@@ -1300,7 +1022,7 @@ eval_logs[eval_cols].round(4)
 # El modelo devuelve una probabilidad por etiqueta. Usar el mismo umbral (0.5) para todas no es
 # óptimo: las etiquetas raras suelen necesitar umbrales distintos. Ajustamos un **umbral por
 # etiqueta en validación** (rejilla de 0.05 a 0.95 con paso 0.05, maximizando el F1 de cada
-# etiqueta) y lo aplicamos sin cambios a test. Test se usa una única vez, para el informe final.
+# etiqueta) y lo aplicamos sin cambios a test.
 #
 # Para la inferencia ordenamos los textos por longitud: los lotes tienen menos relleno y la
 # predicción es más rápida.
@@ -1354,7 +1076,7 @@ pd.Series(ft_thresholds, index=TAGS, name="umbral").to_frame().T
 
 # %% [markdown]
 # Guardamos los umbrales en la configuración del modelo y subimos la versión final al Hub, junto
-# con el historial del entrenamiento (necesario para dibujar las curvas con `RUN_TRAINING=False`).
+# con el historial del entrenamiento.
 
 # %%
 model.config.thresholds = ft_thresholds.tolist()
@@ -1391,7 +1113,7 @@ def predict_problem(model, text):
 
 if PUSH_TO_HUB or not CONFIG["RUN_TRAINING"]:
     demo_model = CFMultiTaskModel.from_pretrained(CONFIG["HUB_MODEL_ID"]).to(DEVICE).eval()
-else:  # sin acceso de escritura al Hub, se usa el modelo recién entrenado
+else: 
     demo_model = model
 sample = data["test"].iloc[0]
 pred_tags, pred_rating = predict_problem(demo_model, sample["text"])
@@ -1405,21 +1127,20 @@ if demo_model is not model:
 # ## 5.2. Baselines
 #
 # Para saber si el ajuste fino aporta algo hay que compararlo con referencias razonables. Todas se
-# evalúan sobre el **mismo test**, con las **mismas métricas** y con umbrales por etiqueta
+# evalúan sobre el mismo test, con las mismas métricas y con umbrales por etiqueta
 # ajustados en validación:
 #
 # - **B0, trivial.** Cada etiqueta recibe como puntuación su frecuencia en train y el rating es
 #   siempre la media de train. Es el mínimo que cualquier modelo debe superar.
-# - **B1, TF-IDF + modelos lineales.** Bolsa de unigramas y bigramas con regresión logística
-#   (una por etiqueta, `class_weight="balanced"`, con `C` elegido en validación) y regresión
+# - **B1, TF-IDF + modelos lineales.** Bolsa de unigramas y bigramas con regresión logística y regresión
 #   `Ridge` para el rating. Es el baseline clásico en clasificación de textos.
-# - **B2, ModernBERT sin ajustar (*linear probe*).** Es el **modelo base sin ajustar**: se extraen
-#   los *embeddings* de ModernBERT-base **congelado** (mismo *mean pooling* y `MAX_LEN`) y se
+# - **B2, ModernBERT sin ajustar (*linear probe*).** Es el modelo base sin ajustar: se extraen
+#   los *embeddings* de ModernBERT-base congelado y se
 #   entrenan encima los mismos modelos lineales. Mide cuánto aporta ajustar el *encoder* frente a
 #   usar solo sus representaciones preentrenadas.
 
 # %%
-results = {}  # nombre -> puntuaciones, ratings y umbrales de val y test
+results = {}
 
 
 def register(name, val_scores, test_scores, val_rating, test_rating):
@@ -1523,9 +1244,6 @@ print(f"Test: {len(Y['test'])} problemas")
 main_table.round(3)
 
 # %% [markdown]
-# <!-- TODO (autor): discusión de la tabla principal -->
-
-# %% [markdown]
 # ## 5.4. Efecto del ajuste de umbrales
 
 # %%
@@ -1538,9 +1256,6 @@ for name in ROW_ORDER[1:]:
                             "F1 macro (0.5)": fixed["f1_macro"],
                             "F1 macro (ajustado)": tuned["f1_macro"]}
 pd.DataFrame(threshold_rows).T.round(3)
-
-# %% [markdown]
-# <!-- TODO (autor): cuánto aportan los umbrales -->
 
 # %% [markdown]
 # ## 5.5. Análisis por etiqueta
@@ -1571,9 +1286,6 @@ ax.legend(frameon=False, loc="lower right")
 plt.tight_layout()
 plt.show()
 per_tag_ft.sort_values("F1", ascending=False).round(3)
-
-# %% [markdown]
-# <!-- TODO (autor): ¿qué etiquetas se predicen bien y cuáles mal? ¿influye la frecuencia? -->
 
 # %% [markdown]
 # ## 5.6. Predicción del rating
@@ -1609,13 +1321,9 @@ bucket_df.assign(problemas=[int((mask_test & (R["test"] >= lo) & (R["test"] <= h
                             for lo, hi in buckets]).round(1)
 
 # %% [markdown]
-# <!-- TODO (autor): ¿en qué rangos de dificultad se equivoca más el modelo? -->
-
-# %% [markdown]
 # ## 5.7. Análisis de errores
 #
-# Ejemplos de aciertos y fallos del modelo ajustado en test, ordenados por el F1 de cada problema
-# (el F1 entre sus etiquetas reales y las predichas).
+# Ejemplos de aciertos y fallos del modelo ajustado en test, ordenados por el F1 de cada problema.
 
 # %%
 pred_test = (ft_test_probs >= ft_thresholds).astype(int)
@@ -1645,9 +1353,6 @@ with pd.option_context("display.max_colwidth", 400):
     display(show_examples(ranked[:3]))
     print("Fallos (menor F1 por problema)")
     display(show_examples(ranked[-3:]))
-
-# %% [markdown]
-# <!-- TODO (autor): patrones en los errores -->
 
 # %% [markdown]
 # ## 5.8. Limitaciones
@@ -1692,22 +1397,3 @@ with pd.option_context("display.max_colwidth", 400):
 #   longitud.
 # - **Evaluación cuidadosa**: división temporal sin mezclar concursos, deduplicación, umbrales
 #   elegidos solo con validación y comparación con el modelo base sin ajustar (*linear probe*).
-#
-# ## 6.4. Trabajo futuro
-#
-# - Probar `ModernBERT-large` (395M de parámetros).
-# - Añadir como entrada el código de soluciones aceptadas (`open-r1/codeforces-submissions`).
-# - Comparar con un LLM generalista sin ajustar (*zero-shot*).
-#
-# # 7. Referencias
-#
-# - Warner, B., Chaffin, A., Clavié, B., et al. (2024). *Smarter, Better, Faster, Longer: A Modern
-#   Bidirectional Encoder for Fast, Memory Efficient, and Long Context Finetuning and Inference*.
-#   arXiv:2412.13663.
-# - Model card de [`answerdotai/ModernBERT-base`](https://huggingface.co/answerdotai/ModernBERT-base).
-# - Dataset card de [`open-r1/codeforces`](https://huggingface.co/datasets/open-r1/codeforces).
-# - Documentación de Hugging Face
-#   [`transformers` (Trainer)](https://huggingface.co/docs/transformers/main_classes/trainer)
-#   y de [scikit-learn](https://scikit-learn.org/stable/).
-# - Serrano, E. Notebooks de clase *6. GenAI&LMs Fine-Tuning BERT* y *7. GenAI&LMs QLoRA*,
-#   Universidad Politécnica de Madrid.
